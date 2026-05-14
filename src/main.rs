@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use bip39::{Language, Mnemonic};
-use bitcoin::{Address, Network, PrivateKey};
+use bitcoin::bip32::{DerivationPath, Xpriv, Xpub};
+use bitcoin::{Address, NetworkKind};
 use clap::Parser;
 use colored::*;
 use ed25519_dalek::SigningKey;
@@ -9,6 +10,7 @@ use qr2term::print_qr;
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use std::fs;
+use std::str::FromStr;
 
 #[derive(Parser)]
 #[command(author, version, about = "xgen - Multi-chain HD Wallet CLI")]
@@ -38,7 +40,7 @@ enum Commands {
         #[arg(long, default_value_t = 0)]
         change: u32,
 
-        #[arg(short, long, default_value_t = 3)]
+        #[arg(short, long, default_value_t = 1)]
         num: u32,
 
         #[arg(long, default_value_t = 12)]
@@ -61,6 +63,12 @@ enum Commands {
 
         #[arg(long)]
         hw_sim: bool,
+
+        #[arg(long)]
+        xpub: Option<String>,
+
+        #[arg(long)]
+        xpub_path: Option<String>,
     },
 
     Decrypt {
@@ -124,27 +132,37 @@ fn main() -> Result<()> {
             encrypt,
             password,
             hw_sim,
+            xpub,
+            xpub_path,
         } => {
-            let mnemonic_obj = get_or_generate_mnemonic(mnemonic, strength, json)?;
-            let seed = mnemonic_obj.to_seed(&passphrase);
-
             let chain_lower = chain.to_lowercase();
             let base_path = get_default_path(&chain_lower, account, change, hw_sim);
-
             let quiet = json || output.is_some();
-            let result = generate_for_chain(
-                &seed,
-                &base_path,
-                index,
-                num,
-                &mnemonic_obj,
-                &passphrase,
-                &chain_lower,
-                qr,
-                quiet,
-            )?;
 
-            handle_output(result, json, output, encrypt, password)?;
+            if let Some(xpub_str) = xpub {
+                let xpub_base =
+                    xpub_path.unwrap_or_else(|| base_path.trim_end_matches("/0").to_string());
+                let result =
+                    generate_from_xpub(&xpub_str, &xpub_base, index, num, &chain_lower, qr, quiet)?;
+                handle_output(result, json, output, encrypt, password)?;
+            } else {
+                let mnemonic_obj = get_or_generate_mnemonic(mnemonic, strength, json)?;
+                let seed = mnemonic_obj.to_seed(&passphrase);
+
+                let result = generate_for_chain(
+                    &seed,
+                    &base_path,
+                    index,
+                    num,
+                    &mnemonic_obj,
+                    &passphrase,
+                    &chain_lower,
+                    qr,
+                    quiet,
+                )?;
+
+                handle_output(result, json, output, encrypt, password)?;
+            }
         }
         Commands::Decrypt {
             file,
@@ -304,8 +322,119 @@ fn generate_for_chain(
     }
 
     let mut wallet = build_output(mnemonic, bip39_pass, chain, keys);
-    wallet.master_xprv = Some("Master key hidden for security".to_string());
+
+    if !is_ed25519_chain(chain) {
+        let account_path = base_path.trim_end_matches(|c: char| c.is_numeric() || c == '/');
+        if let Ok(account_key) = derive_secp_key(seed, account_path) {
+            let secp = bitcoin::secp256k1::Secp256k1::new();
+            wallet.master_xpub = Some(Xpub::from_priv(&secp, &account_key).to_string());
+        }
+    }
+    if wallet.master_xprv.is_none() {
+        wallet.master_xprv = Some("Master key hidden for security".to_string());
+    }
     Ok(wallet)
+}
+
+fn build_xpub(
+    pubkey: bitcoin::secp256k1::PublicKey,
+    chain_code: bitcoin::bip32::ChainCode,
+) -> bitcoin::bip32::Xpub {
+    bitcoin::bip32::Xpub {
+        network: bitcoin::NetworkKind::Main,
+        depth: 0,
+        parent_fingerprint: bitcoin::bip32::Fingerprint::default(),
+        child_number: bitcoin::bip32::ChildNumber::Normal { index: 0 },
+        public_key: pubkey,
+        chain_code,
+    }
+}
+
+fn parse_xpub(xpub_str: &str) -> Result<bitcoin::bip32::Xpub> {
+    use std::str::FromStr;
+
+    if let Ok(xpub) = bitcoin::bip32::Xpub::from_str(xpub_str) {
+        return Ok(xpub);
+    }
+
+    let stripped = xpub_str.strip_prefix("xpub").unwrap_or(xpub_str);
+    if stripped.len() >= 64 && stripped.chars().all(|c| c.is_ascii_hexdigit()) {
+        let bytes = hex::decode(stripped).context("Invalid hex")?;
+        if bytes.len() < 32 {
+            anyhow::bail!("Hex too short");
+        }
+        let mut chain = [0u8; 32];
+        chain.copy_from_slice(&bytes[..32]);
+        let cc = bitcoin::bip32::ChainCode::from_hex(&hex::encode(chain))
+            .expect("32 bytes is always valid hex");
+        let pk = bitcoin::secp256k1::PublicKey::from_slice(&bytes[32..])
+            .context("Invalid public key in hex xpub")?;
+        return Ok(build_xpub(pk, cc));
+    }
+
+    anyhow::bail!("Invalid xpub: expected base58 BIP32 xpub or hex chain_code(32)+pubkey(33)")
+}
+
+fn generate_from_xpub(
+    xpub_str: &str,
+    base_path: &str,
+    specific_index: Option<u32>,
+    num: u32,
+    chain: &str,
+    show_qr: bool,
+    quiet: bool,
+) -> Result<WalletOutput> {
+    if !quiet {
+        println!("\n{}", "=== WATCH-ONLY (xpub mode) ===".yellow().bold());
+        println!("Using xpub: {}", xpub_str);
+        println!("Derivation path: {}/*\n", base_path.trim_end_matches('/'));
+    }
+
+    let xpub = parse_xpub(xpub_str)?;
+    let secp = bitcoin::secp256k1::Secp256k1::new();
+    let count = specific_index.map_or(num, |_| 1);
+    let mut keys = vec![];
+
+    for i in 0..count {
+        let idx = specific_index.unwrap_or(i);
+        let path = format!("{}/{}", base_path.trim_end_matches('/'), idx);
+
+        let child_idx = bitcoin::bip32::ChildNumber::from_normal_idx(idx)?;
+        let child = xpub
+            .ckd_pub(&secp, child_idx)
+            .context("Failed to derive child (use non-hardened index only)")?;
+
+        let pk_bytes = child.public_key.serialize_uncompressed();
+        let address = match chain {
+            "evm" | "ethereum" => eth_address(&pk_bytes),
+            _ => format!("0x{}", hex::encode(pk_bytes)),
+        };
+
+        let info = KeyInfo {
+            index: idx,
+            path,
+            xprv: None,
+            xpub: Some(xpub_str.to_string()),
+            private_key: "WATCH-ONLY".to_string(),
+            public_key: hex::encode(pk_bytes),
+            address,
+            wif: None,
+        };
+
+        if !quiet {
+            print_key_info(&info, show_qr);
+        }
+        keys.push(info);
+    }
+
+    Ok(WalletOutput {
+        mnemonic: "WATCH-ONLY (xpub mode)".to_string(),
+        passphrase: String::new(),
+        chain: chain.to_string(),
+        master_xprv: None,
+        master_xpub: Some(xpub_str.to_string()),
+        keys,
+    })
 }
 
 fn build_derivation_path(base: &str, index: u32, chain: &str) -> String {
@@ -320,25 +449,30 @@ fn build_derivation_path(base: &str, index: u32, chain: &str) -> String {
 
 // ==================== Chain Implementations ====================
 
+fn derive_secp_key(seed: &[u8], path: &str) -> Result<Xpriv> {
+    let secp = bitcoin::secp256k1::Secp256k1::new();
+    let master = Xpriv::new_master(NetworkKind::Main, seed)
+        .context("Failed to create master key from seed")?;
+    let stripped = path.strip_prefix("m/").unwrap_or(path);
+    let dp = DerivationPath::from_str(stripped).context("Invalid derivation path")?;
+    let child = master
+        .derive_priv(&secp, &dp)
+        .context("Key derivation failed")?;
+    Ok(child)
+}
+
 fn generate_evm(seed: &[u8], path: &str, idx: u32) -> Result<KeyInfo> {
-    use hd_wallet::curves::Secp256k1;
+    let secp = bitcoin::secp256k1::Secp256k1::new();
+    let child = derive_secp_key(seed, path)?;
 
-    let master_sk = hd_wallet::slip10::derive_master_key::<Secp256k1>(seed)?;
-    let key_pair = hd_wallet::ExtendedKeyPair::from(master_sk);
-    let child = hd_wallet::Slip10::derive_child_key_pair_with_path(&key_pair, parse_path(path));
-
-    let pk_point = child.public_key().public_key;
-    let pub_bytes = pk_point.to_bytes(false);
+    let pub_key = child.to_priv().public_key(&secp);
+    let pk_secp = pub_key.inner;
+    let pub_bytes = pk_secp.serialize_uncompressed();
     let address = eth_address(&pub_bytes);
 
-    let sk_bytes = scalar_to_32_bytes(&child.secret_key().secret_key);
-
-    let mut xprv_data = child.secret_key().chain_code.to_vec();
-    xprv_data.extend_from_slice(&sk_bytes);
-    let mut xpub_data = child.public_key().chain_code.to_vec();
-    xpub_data.extend_from_slice(&pub_bytes);
-    let xprv = format!("xprv{}", hex::encode(xprv_data));
-    let xpub = format!("xpub{}", hex::encode(xpub_data));
+    let sk_bytes = child.private_key.secret_bytes();
+    let xprv = child.to_string();
+    let xpub = Xpub::from_priv(&secp, &child).to_string();
 
     Ok(KeyInfo {
         index: idx,
@@ -346,38 +480,24 @@ fn generate_evm(seed: &[u8], path: &str, idx: u32) -> Result<KeyInfo> {
         xprv: Some(xprv),
         xpub: Some(xpub),
         private_key: format!("0x{}", hex::encode(sk_bytes)),
-        public_key: format!("0x{}", hex::encode(&pub_bytes)),
+        public_key: format!("0x{}", hex::encode(pub_bytes)),
         address,
         wif: None,
     })
 }
 
 fn generate_bitcoin(seed: &[u8], path: &str, idx: u32) -> Result<KeyInfo> {
-    use hd_wallet::curves::Secp256k1;
-
     let secp = bitcoin::secp256k1::Secp256k1::new();
-    let master_sk = hd_wallet::slip10::derive_master_key::<Secp256k1>(seed)?;
-    let key_pair = hd_wallet::ExtendedKeyPair::from(master_sk);
-    let child = hd_wallet::Slip10::derive_child_key_pair_with_path(&key_pair, parse_path(path));
+    let child = derive_secp_key(seed, path)?;
 
-    let sk_bytes = scalar_to_32_bytes(&child.secret_key().secret_key);
-
-    let secret_key = bitcoin::secp256k1::SecretKey::from_slice(&sk_bytes)
-        .map_err(|e| anyhow::anyhow!("Invalid secret key: {:?}", e))?;
-    let priv_key = PrivateKey::new(secret_key, Network::Bitcoin);
+    let priv_key = child.to_priv();
     let pub_key = priv_key.public_key(&secp);
-    let address = Address::p2pkh(pub_key, Network::Bitcoin);
+    let address = Address::p2pkh(pub_key, bitcoin::Network::Bitcoin);
     let wif = priv_key.to_wif();
+    let pub_bytes = pub_key.inner.serialize().to_vec();
 
-    let pk_point = child.public_key().public_key;
-    let pub_bytes = pk_point.to_bytes(true);
-
-    let mut xprv_data = child.secret_key().chain_code.to_vec();
-    xprv_data.extend_from_slice(&sk_bytes);
-    let mut xpub_data = child.public_key().chain_code.to_vec();
-    xpub_data.extend_from_slice(&pub_bytes);
-    let xprv = format!("xprv{}", hex::encode(xprv_data));
-    let xpub = format!("xpub{}", hex::encode(xpub_data));
+    let xprv = child.to_string();
+    let xpub = Xpub::from_priv(&secp, &child).to_string();
 
     Ok(KeyInfo {
         index: idx,
@@ -438,23 +558,23 @@ fn generate_ton(seed: &[u8], path: &str, idx: u32) -> Result<KeyInfo> {
 }
 
 fn generate_doge(seed: &[u8], path: &str, idx: u32) -> Result<KeyInfo> {
-    use hd_wallet::curves::Secp256k1;
+    let secp = bitcoin::secp256k1::Secp256k1::new();
+    let child = derive_secp_key(seed, path)?;
 
-    let master_sk = hd_wallet::slip10::derive_master_key::<Secp256k1>(seed)?;
-    let key_pair = hd_wallet::ExtendedKeyPair::from(master_sk);
-    let child = hd_wallet::Slip10::derive_child_key_pair_with_path(&key_pair, parse_path(path));
-
-    let pk_point = child.public_key().public_key;
-    let pk_bytes = pk_point.to_bytes(true);
+    let pub_key = child.to_priv().public_key(&secp);
+    let pk_secp = pub_key.inner;
+    let pk_bytes = pk_secp.serialize().to_vec();
     let address = format!("D{}", hex::encode(&pk_bytes[..pk_bytes.len().min(20)]));
 
-    let sk_bytes = scalar_to_32_bytes(&child.secret_key().secret_key);
+    let sk_bytes = child.private_key.secret_bytes();
+    let xprv = child.to_string();
+    let xpub = Xpub::from_priv(&secp, &child).to_string();
 
     Ok(KeyInfo {
         index: idx,
         path: path.to_string(),
-        xprv: None,
-        xpub: None,
+        xprv: Some(xprv),
+        xpub: Some(xpub),
         private_key: hex::encode(sk_bytes),
         public_key: hex::encode(pk_bytes),
         address,

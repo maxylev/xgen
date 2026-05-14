@@ -1047,7 +1047,7 @@ mod help {
     #[test]
     fn test_version() {
         let out = assert_success(&["--version"]);
-        assert!(out.contains("0.8.1"), "Version should be 0.8.1");
+        assert!(out.contains("0.9.0"), "Version should be 0.9.0");
     }
 }
 

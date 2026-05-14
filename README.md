@@ -44,7 +44,7 @@ sudo cp target/release/xgen /usr/local/bin/
 ### Generate a new wallet
 
 ```bash
-# Default: EVM, 3 addresses
+# Default: EVM, 1 address, account 0
 xgen gen
 
 # TON blockchain
@@ -111,7 +111,7 @@ xgen gen --chain btc --num 5 --json --output wallet.json
 | `--mnemonic`        | Import existing BIP39 mnemonic |
 | `--passphrase`      | BIP39 passphrase (default: empty) |
 | `--index`           | Derive a single specific index |
-| `--num`             | Number of addresses to derive (default: 3) |
+| `--num`             | Number of addresses to derive (default: 1) |
 | `--account`         | Account index for BIP44 derivation (default: 0) |
 | `--change`          | Change index (default: 0) |
 | `--strength`        | Mnemonic strength: 12 or 24 words (default: 12) |
@@ -201,6 +201,66 @@ xgen/
 │   └── publish.yml      # Publish to crates.io on release
 └── LICENSE
 ```
+
+### Exchange / Watch-Only Mode (xpub)
+
+Generate **unlimited deposit addresses** from an xpub **without private keys** — the standard approach used by crypto exchanges:
+
+```bash
+# Step 1 (COLD WALLET — offline): Generate the account xpub
+xgen gen --chain evm --mnemonic "your twelve words here" --index 0 --json
+# → master_xpub: xpub6DCoCpSuQZB2ja...
+
+# Step 2 (HOT SERVER): Generate 1000 deposit addresses from xpub (no private keys)
+xgen gen --xpub "xpub6DCoCpSuQZB2ja..." --num 1000 --chain evm --json
+
+# Step 3: Generate a specific user's deposit address
+xgen gen --xpub "xpub6DCoCpSuQZB2ja..." --index 42 --chain evm
+
+# Step 4 (COLD WALLET — offline): Sign withdrawal with private key
+xgen gen --chain evm --mnemonic "your twelve words here" --index 42
+# Use the private_key field to sign the withdrawal transaction
+```
+
+**Architecture:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                  CRYPTO EXCHANGE SETUP                       │
+├─────────────────────────┬───────────────────────────────────┤
+│   COLD WALLET (offline) │   HOT SERVER (online)              │
+│                         │                                     │
+│   mnemonic phrase       │   xpub (BIP32 extended public key) │
+│       │                 │       │                             │
+│       ▼                 │       ▼                             │
+│   master_xprv           │   derive_pub(0) → User A deposit   │
+│       │                 │   derive_pub(1) → User B deposit   │
+│       ▼                 │   derive_pub(2) → User C deposit   │
+│   account xpub ───────► │   derive_pub(3) → ...              │
+│   (m/44'/60'/0')       │       │                             │
+│                         │   BALANCE CHECK via RPC            │
+│   No network access     │   No private keys on hot server    │
+└─────────────────────────┴───────────────────────────────────┘
+```
+
+**Verified with real blockchains (Anvil, Solana local validator):**
+
+```bash
+# 1. Cold wallet generates account xpub
+# 2. Hot server derives 5 deposit addresses from xpub
+# 3. User deposits 10 ETH to address[3]
+# 4. Cold wallet signs withdrawal of 3 ETH from address[3]
+# 5. All addresses MATCH between xpub and private key derivation ✓
+```
+
+**Important:** Only non-hardened derivation (`/0`, `/1`, `/2`) works with xpub. Hardened paths (`/0'`, `/1'`) require the private key. The `master_xpub` field in JSON output contains the account-level xpub (`m/44'/60'/0'`).
+
+### Options
+
+| Option              | Description |
+|---------------------|-------------|
+| `--xpub <string>`   | Generate watch-only addresses from xpub (no private keys needed) |
+| `--xpub-path <path>` | Base path for xpub derivation (default: derived from chain defaults) |
 
 ## Security Notes
 
