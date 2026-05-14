@@ -146,7 +146,11 @@ fn main() -> Result<()> {
 
             handle_output(result, json, output, encrypt, password)?;
         }
-        Commands::Decrypt { file, output, password } => {
+        Commands::Decrypt {
+            file,
+            output,
+            password,
+        } => {
             decrypt_wallet(&file, output, password)?;
         }
     }
@@ -167,7 +171,11 @@ fn get_default_path(chain: &str, account: u32, change: u32, _hw_sim: bool) -> St
     }
 }
 
-fn get_or_generate_mnemonic(mnemonic: Option<String>, strength: u32, quiet: bool) -> Result<Mnemonic> {
+fn get_or_generate_mnemonic(
+    mnemonic: Option<String>,
+    strength: u32,
+    quiet: bool,
+) -> Result<Mnemonic> {
     match mnemonic {
         Some(m) => Mnemonic::parse_in(Language::English, m).context("Invalid mnemonic"),
         None => {
@@ -194,7 +202,9 @@ fn is_ed25519_chain(chain: &str) -> bool {
     )
 }
 
-fn derive_master_key_pair_ed25519(seed: &[u8]) -> hd_wallet::ExtendedKeyPair<hd_wallet::curves::Ed25519> {
+fn derive_master_key_pair_ed25519(
+    seed: &[u8],
+) -> hd_wallet::ExtendedKeyPair<hd_wallet::curves::Ed25519> {
     use generic_ec::{Scalar, SecretScalar};
     use hd_wallet::{ChainCode, ExtendedSecretKey};
 
@@ -302,8 +312,7 @@ fn build_derivation_path(base: &str, index: u32, chain: &str) -> String {
         let base = base.trim_end_matches('\'');
         format!("{}/{}'", base, index)
     } else {
-        let base = base
-            .trim_end_matches(|c: char| c.is_numeric() || c == '/');
+        let base = base.trim_end_matches(|c: char| c.is_numeric() || c == '/');
         format!("{}/{}", base, index)
     }
 }
@@ -529,11 +538,7 @@ fn eth_address(pubkey_bytes: &[u8]) -> String {
     checksum.push_str("0x");
     for (i, c) in addr.chars().enumerate() {
         let n = u8::from_str_radix(&hash[i..=i], 16).unwrap_or(0);
-        checksum.push(if n > 7 {
-            c.to_ascii_uppercase()
-        } else {
-            c
-        });
+        checksum.push(if n > 7 { c.to_ascii_uppercase() } else { c });
     }
     checksum
 }
@@ -674,7 +679,9 @@ fn decrypt_data(enc: &EncryptedWallet, password: &str) -> Result<String> {
 
     let salt = engine.decode(&enc.salt).context("Invalid salt")?;
     let nonce = engine.decode(&enc.nonce).context("Invalid nonce")?;
-    let ciphertext = engine.decode(&enc.ciphertext).context("Invalid ciphertext")?;
+    let ciphertext = engine
+        .decode(&enc.ciphertext)
+        .context("Invalid ciphertext")?;
 
     let mut key = [0u8; 32];
     let params = scrypt::Params::new(15, 8, 1)?;
