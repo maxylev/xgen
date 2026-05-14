@@ -1,6 +1,6 @@
 [package]
 name = "xgen"
-version = "0.8.0"
+version = "0.8.1"
 edition = "2021"
 authors = ["Susid Sprava"]
 description = "Fast multi-chain HD wallet CLI: EVM, Solana, TON, Bitcoin, Cardano, Monero and more"
