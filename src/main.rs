@@ -259,6 +259,7 @@ fn scalar_to_32_bytes<E: generic_ec::Curve>(scalar: &generic_ec::SecretScalar<E>
     arr
 }
 
+#[allow(clippy::too_many_arguments)]
 fn generate_for_chain(
     seed: &[u8],
     base_path: &str,
@@ -332,8 +333,8 @@ fn generate_evm(seed: &[u8], path: &str, idx: u32) -> Result<KeyInfo> {
 
     let sk_bytes = scalar_to_32_bytes(&child.secret_key().secret_key);
 
-    let xprv = format!("xprv{}", hex::encode(&child.secret_key().chain_code));
-    let xpub = format!("xpub{}", hex::encode(&child.public_key().chain_code));
+    let xprv = format!("xprv{}", hex::encode(child.secret_key().chain_code));
+    let xpub = format!("xpub{}", hex::encode(child.public_key().chain_code));
 
     Ok(KeyInfo {
         index: idx,
@@ -367,8 +368,8 @@ fn generate_bitcoin(seed: &[u8], path: &str, idx: u32) -> Result<KeyInfo> {
     let pk_point = child.public_key().public_key;
     let pub_bytes = pk_point.to_bytes(true);
 
-    let xprv = format!("xprv{}", hex::encode(&child.secret_key().chain_code));
-    let xpub = format!("xpub{}", hex::encode(&child.public_key().chain_code));
+    let xprv = format!("xprv{}", hex::encode(child.secret_key().chain_code));
+    let xpub = format!("xpub{}", hex::encode(child.public_key().chain_code));
 
     Ok(KeyInfo {
         index: idx,
