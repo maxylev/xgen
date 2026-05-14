@@ -243,17 +243,104 @@ xgen gen --chain evm --mnemonic "your twelve words here" --index 42
 └─────────────────────────┴───────────────────────────────────┘
 ```
 
-**Verified with real blockchains (Anvil, Solana local validator):**
+## Real-World Exchange Workflow (Verified on Anvil + Solana Validator)
+
+The complete deposit → withdraw cycle using xgen, verified against live blockchain nodes:
+
+### EVM (Ethereum) Exchange Flow
+
+```
+COLD WALLET (offline)          HOT SERVER (online)           BLOCKCHAIN
+┌─────────────────────┐        ┌──────────────────────┐      ┌────────────┐
+│ mnemonic phrase     │        │ xpub (watch-only)     │      │ Anvil      │
+│         │           │──────► │         │             │      │ local node │
+│         ▼           │ xpub   │         ▼             │      └────┬───────┘
+│ account xpub        │        │ derive_pub(i) → addr  │           │
+│ m/44'/60'/0'       │        │  i=0 → 0xb8fd...UserA  │◄─────────┤
+│                     │        │  i=1 → 0x9438...UserB  │  deposit │
+│ sign withdrawal     │        │  i=2 → 0xF1e6...UserC  │  10 ETH  │
+│ with private_key[i] │◄───────┤  i=3 → 0xF77A...UserD  │──┬───────┤
+│                     │ request│  i=4 → 0x1905...UserE  │  │       │
+└─────────────────────┘ sign   └──────────────────────┘  │       │
+                                                          │       │
+                                                      withdraw   │
+                                                       3 ETH    │
+                                                          │       │
+                                                          ▼       ▼
+```
+**Verified operations:**
+| Step | Operation | Result |
+|------|-----------|--------|
+| 1 | Cold wallet generates account xpub | `xpub6DCoCpSuQZB2...` |
+| 2 | Hot server derives 5 deposit addresses from xpub | Match private key derivation ✓ |
+| 3 | User deposits 10 ETH to address index 2 | Balance: 10 ETH ✓ |
+| 4 | Cold wallet signs withdrawal of 3 ETH from index 2 | Balance: ~7 ETH ✓ |
+| 5 | Recipient receives funds | Balance increase confirmed ✓ |
+
+### Solana Exchange Flow
+
+```
+COLD WALLET (offline)          HOT SERVER (online)           BLOCKCHAIN
+┌─────────────────────┐        ┌──────────────────────┐      ┌────────────────┐
+│ mnemonic phrase     │        │ user addresses        │      │ Solana Test    │
+│         │           │        │  index 0 → 2zhZ9...   │      │ Validator      │
+│         ▼           │        │  index 1 → 9jC9G...   │      └───────┬────────┘
+│ derive address[i]   │        │  index 2 → KgpNh...   │              │
+│ with xgen gen       │        │  index 3 → 5PhuC...   │◄─────────────┤
+│                     │        │  index 4 → 5shKA...   │  airdrop 5 SOL│
+│ sign transfer       │        │                        │──┬───────────┤
+│ with private_key[i] │◄───────┤                        │  │           │
+│                     │ sign   └──────────────────────┘  │  transfer   │
+└─────────────────────┘                                   │  2 SOL     │
+                                                          │  │         │
+                                                          ▼  ▼         │
+```
+**Verified operations:**
+| Step | Operation | Result |
+|------|-----------|--------|
+| 1 | Cold wallet generates address index 0 | `2zhZ9zUcmBHFjTYKb1qUbLxPPv5ZkPr9qVUtN7rzyuB8` |
+| 2 | Derive 5 addresses deterministically | All indices deterministic ✓ |
+| 3 | User deposits 5 SOL (airdrop) to index 0 | Balance: 5 SOL ✓ |
+| 4 | Cold wallet signs transfer of 2 SOL from index 0 | Balance: ~3 SOL ✓ |
+| 5 | Recipient receives funds | Balance: 2 SOL ✓ |
+
+### Commands Used
 
 ```bash
-# 1. Cold wallet generates account xpub
-# 2. Hot server derives 5 deposit addresses from xpub
-# 3. User deposits 10 ETH to address[3]
-# 4. Cold wallet signs withdrawal of 3 ETH from address[3]
-# 5. All addresses MATCH between xpub and private key derivation ✓
+# === EVM Exchange ===
+
+# Step 1: Cold wallet — generate account xpub
+xgen gen --chain evm --mnemonic "your twelve words here" --index 0 --json
+
+# Step 2: Hot server — generate deposit addresses from xpub
+xgen gen --xpub "xpub6DCoCpSuQZB2..." --num 1000 --chain evm --json
+
+# Step 3: Cold wallet — sign withdrawal for user at index 42
+xgen gen --chain evm --mnemonic "your twelve words here" --index 42 --json
+# Use private_key field to sign the tx
+
+# === Solana Exchange ===
+
+# Step 1: Cold wallet — generate address
+xgen gen --chain solana --mnemonic "your twelve words here" --index 0
+
+# Step 2: Create keypair for signing
+xgen gen --chain solana --mnemonic "your twelve words here" --index 0 --json
+# Extract private_key + public_key → create [priv(32) + pub(32)] keypair file
+
+# Step 3: Sign and send
+solana transfer --keypair keypair.json --url <RPC> <recipient> <amount>
 ```
 
-**Important:** Only non-hardened derivation (`/0`, `/1`, `/2`) works with xpub. Hardened paths (`/0'`, `/1'`) require the private key. The `master_xpub` field in JSON output contains the account-level xpub (`m/44'/60'/0'`).
+### Deterministic Addresses
+
+Same mnemonic + index = same address on every chain, every time:
+
+```bash
+xgen gen --chain evm    --mnemonic "your phrase" --index 0  # same address always
+xgen gen --chain solana --mnemonic "your phrase" --index 0  # same address always
+xgen gen --chain evm    --mnemonic "your phrase" --index 1  # different from index 0
+```
 
 ### Options
 
@@ -261,6 +348,8 @@ xgen gen --chain evm --mnemonic "your twelve words here" --index 42
 |---------------------|-------------|
 | `--xpub <string>`   | Generate watch-only addresses from xpub (no private keys needed) |
 | `--xpub-path <path>` | Base path for xpub derivation (default: derived from chain defaults) |
+
+**Important:** Only non-hardened derivation (`/0`, `/1`, `/2`) works with xpub. Hardened paths (`/0'`, `/1'`) require the private key. The `master_xpub` field in JSON output contains the account-level xpub (`m/44'/60'/0'`).
 
 ## Security Notes
 
