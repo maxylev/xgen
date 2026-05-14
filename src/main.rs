@@ -323,12 +323,18 @@ fn generate_for_chain(
 
     let mut wallet = build_output(mnemonic, bip39_pass, chain, keys);
 
-    if !is_ed25519_chain(chain) {
-        let account_path = base_path.trim_end_matches(|c: char| c.is_numeric() || c == '/');
-        if let Ok(account_key) = derive_secp_key(seed, account_path) {
-            let secp = bitcoin::secp256k1::Secp256k1::new();
-            wallet.master_xpub = Some(Xpub::from_priv(&secp, &account_key).to_string());
-        }
+    let account_path = base_path.trim_end_matches(|c: char| c.is_numeric() || c == '/');
+    if is_ed25519_chain(chain) {
+        let key_pair = derive_master_key_pair_ed25519(seed);
+        let path = parse_path(account_path);
+        let child = hd_wallet::Edwards::derive_child_key_pair_with_path(&key_pair, path);
+        let mut xpub = child.public_key().chain_code.to_vec();
+        let pk_point = child.public_key().public_key;
+        xpub.extend_from_slice(&pk_point.to_bytes(false));
+        wallet.master_xpub = Some(hex::encode(xpub));
+    } else if let Ok(account_key) = derive_secp_key(seed, account_path) {
+        let secp = bitcoin::secp256k1::Secp256k1::new();
+        wallet.master_xpub = Some(Xpub::from_priv(&secp, &account_key).to_string());
     }
     if wallet.master_xprv.is_none() {
         wallet.master_xprv = Some("Master key hidden for security".to_string());
@@ -390,10 +396,20 @@ fn generate_from_xpub(
         println!("Derivation path: {}/*\n", base_path.trim_end_matches('/'));
     }
 
-    let xpub = parse_xpub(xpub_str)?;
-    let secp = bitcoin::secp256k1::Secp256k1::new();
     let count = specific_index.map_or(num, |_| 1);
     let mut keys = vec![];
+
+    if is_ed25519_chain(chain) {
+        anyhow::bail!(
+            "xpub mode is not supported for Ed25519 chains ({}) — \
+             Ed25519 uses hardened derivation which requires the private key. \
+             Use the mnemonic or --index flag instead.",
+            chain
+        );
+    }
+
+    let xpub = parse_xpub(xpub_str)?;
+    let secp = bitcoin::secp256k1::Secp256k1::new();
 
     for i in 0..count {
         let idx = specific_index.unwrap_or(i);
