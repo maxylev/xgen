@@ -407,6 +407,17 @@ fn generate_from_xpub(
         let pk_bytes = child.public_key.serialize_uncompressed();
         let address = match chain {
             "evm" | "ethereum" => eth_address(&pk_bytes),
+            "btc" | "bitcoin" => {
+                let pubkey = bitcoin::PublicKey::new(child.public_key);
+                bitcoin::Address::p2pkh(pubkey, bitcoin::NetworkKind::Main).to_string()
+            }
+            "doge" | "dogecoin" => {
+                let pk_compressed = child.public_key.serialize();
+                format!(
+                    "D{}",
+                    hex::encode(&pk_compressed[..pk_compressed.len().min(20)])
+                )
+            }
             _ => format!("0x{}", hex::encode(pk_bytes)),
         };
 
@@ -492,7 +503,7 @@ fn generate_bitcoin(seed: &[u8], path: &str, idx: u32) -> Result<KeyInfo> {
 
     let priv_key = child.to_priv();
     let pub_key = priv_key.public_key(&secp);
-    let address = Address::p2pkh(pub_key, bitcoin::Network::Bitcoin);
+    let address = Address::p2pkh(pub_key, bitcoin::NetworkKind::Main);
     let wif = priv_key.to_wif();
     let pub_bytes = pub_key.inner.serialize().to_vec();
 
