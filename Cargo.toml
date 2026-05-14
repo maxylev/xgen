@@ -2,7 +2,7 @@
 name = "xgen"
 version = "0.8.1"
 edition = "2021"
-authors = ["Susid Sprava"]
+authors = ["maxylev"]
 description = "Fast multi-chain HD wallet CLI: EVM, Solana, TON, Bitcoin, Cardano, Monero and more"
 license = "MIT"
 repository = "https://github.com/maxylev/xgen"
