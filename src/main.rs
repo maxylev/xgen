@@ -333,8 +333,12 @@ fn generate_evm(seed: &[u8], path: &str, idx: u32) -> Result<KeyInfo> {
 
     let sk_bytes = scalar_to_32_bytes(&child.secret_key().secret_key);
 
-    let xprv = format!("xprv{}", hex::encode(child.secret_key().chain_code));
-    let xpub = format!("xpub{}", hex::encode(child.public_key().chain_code));
+    let mut xprv_data = child.secret_key().chain_code.to_vec();
+    xprv_data.extend_from_slice(&sk_bytes);
+    let mut xpub_data = child.public_key().chain_code.to_vec();
+    xpub_data.extend_from_slice(&pub_bytes);
+    let xprv = format!("xprv{}", hex::encode(xprv_data));
+    let xpub = format!("xpub{}", hex::encode(xpub_data));
 
     Ok(KeyInfo {
         index: idx,
@@ -368,8 +372,12 @@ fn generate_bitcoin(seed: &[u8], path: &str, idx: u32) -> Result<KeyInfo> {
     let pk_point = child.public_key().public_key;
     let pub_bytes = pk_point.to_bytes(true);
 
-    let xprv = format!("xprv{}", hex::encode(child.secret_key().chain_code));
-    let xpub = format!("xpub{}", hex::encode(child.public_key().chain_code));
+    let mut xprv_data = child.secret_key().chain_code.to_vec();
+    xprv_data.extend_from_slice(&sk_bytes);
+    let mut xpub_data = child.public_key().chain_code.to_vec();
+    xpub_data.extend_from_slice(&pub_bytes);
+    let xprv = format!("xprv{}", hex::encode(xprv_data));
+    let xpub = format!("xpub{}", hex::encode(xpub_data));
 
     Ok(KeyInfo {
         index: idx,
