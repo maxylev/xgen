@@ -177,15 +177,15 @@ fn main() -> Result<()> {
 
 fn get_default_path(chain: &str, account: u32, change: u32, _hw_sim: bool) -> String {
     match chain {
-        "evm" | "ethereum" => "m/44'/60'/0'/0/0".to_string(),
-        "btc" | "bitcoin" => "m/44'/0'/0'/0/0".to_string(),
+        "evm" | "ethereum" => format!("m/44'/60'/{account}'/{change}/0"),
+        "btc" | "bitcoin" => format!("m/44'/0'/{account}'/{change}/0"),
         "solana" => format!("m/44'/501'/{account}'/{change}'"),
         "ton" | "telegram" => format!("m/44'/607'/{account}'/{change}'"),
         "cardano" | "ada" => format!("m/1852'/1815'/{account}'/0/0"),
         "monero" | "xmr" => format!("m/44'/128'/{account}'/0/0"),
-        "doge" | "dogecoin" => "m/44'/3'/0'/0/0".to_string(),
-        "xrp" | "ripple" => "m/44'/144'/0'/0/0".to_string(),
-        _ => "m/44'/60'/0'/0/0".to_string(),
+        "doge" | "dogecoin" => format!("m/44'/3'/{account}'/{change}/0"),
+        "xrp" | "ripple" => format!("m/44'/144'/{account}'/{change}/0"),
+        _ => format!("m/44'/60'/{account}'/{change}/0"),
     }
 }
 

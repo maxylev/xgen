@@ -273,14 +273,38 @@ xgen gen --xpub "xpub6DCoCpSuQZB2..." --index 42 --chain evm --json
 ### For Ed25519 chains (Solana, TON, XRP, Cardano, Monero):
 
 These chains use **hardened derivation** — xpub-only derivation is mathematically impossible.
-**Pre-generate addresses from the seed offline and export only public keys:**
+You have two options:
+
+**Option A: Pre-generate (most secure — recommended)**
 
 ```bash
-# Cold wallet: pre-generate 10000 addresses, export JSON
+# Cold wallet: pre-generate 10000 addresses, export JSON (no private keys)
 xgen gen --chain solana --mnemonic "your phrase" --num 10000 --json > public-keys.json
 
 # Hot server: use the exported public keys to monitor deposits
 # No private keys ever touch the hot server
+```
+
+**Option B: Dynamic derivation from seed (common for exchanges)**
+
+Generate addresses on-demand using the `--account` flag (each user = separate account):
+
+```bash
+# User 1 → m/44'/501'/0'/0'
+xgen gen --chain solana --mnemonic "your phrase" --account 0 --index 0
+
+# User 2 → m/44'/501'/1'/0'  
+xgen gen --chain solana --mnemonic "your phrase" --account 1 --index 0
+
+# User 10000 → m/44'/501'/9999'/0'
+xgen gen --chain solana --mnemonic "your phrase" --account 9999 --index 0
+```
+
+Or with simple indices (simpler, each user = consecutive index):
+
+```bash
+# Generate 1000 deposit addresses dynamically
+xgen gen --chain solana --mnemonic "your phrase" --num 1000
 ```
 
 ## Real-World Exchange Workflow (EVM + Bitcoin + Solana)
