@@ -69,6 +69,14 @@ enum Commands {
 
         #[arg(long)]
         xpub_path: Option<String>,
+
+        /// Solana mode: full, cold-export, hsm-sim, pda (only affects Solana)
+        #[arg(long, default_value = "full")]
+        solana_mode: String,
+
+        /// Program ID for Solana PDA mode (base58)
+        #[arg(long, default_value = "")]
+        program_id: String,
     },
 
     Decrypt {
@@ -134,6 +142,8 @@ fn main() -> Result<()> {
             hw_sim,
             xpub,
             xpub_path,
+            solana_mode,
+            program_id,
         } => {
             let chain_lower = chain.to_lowercase();
             let base_path = get_default_path(&chain_lower, account, change, hw_sim);
@@ -159,6 +169,8 @@ fn main() -> Result<()> {
                     &chain_lower,
                     qr,
                     quiet,
+                    &solana_mode,
+                    &program_id,
                 )?;
 
                 handle_output(result, json, output, encrypt, password)?;
@@ -278,6 +290,32 @@ fn scalar_to_32_bytes<E: generic_ec::Curve>(scalar: &generic_ec::SecretScalar<E>
 }
 
 #[allow(clippy::too_many_arguments)]
+fn print_solana_mode_info(mode: &str) {
+    match mode {
+        "full" => println!(
+            "{}",
+            "⚠️  FULL MODE - Private keys exposed (High Risk)"
+                .red()
+                .bold()
+        ),
+        "hsm-sim" => println!("{}", "🛡️  HSM Simulation Mode".cyan()),
+        "cold-export" => println!(
+            "{}",
+            "🔒 COLD-EXPORT - Only public addresses (Recommended)"
+                .green()
+                .bold()
+        ),
+        "pda" => println!(
+            "{}",
+            "📍 PDA MODE - Program Derived Addresses (No private key)"
+                .bright_purple()
+                .bold()
+        ),
+        _ => {}
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn generate_for_chain(
     seed: &[u8],
     base_path: &str,
@@ -288,12 +326,17 @@ fn generate_for_chain(
     chain: &str,
     show_qr: bool,
     quiet: bool,
+    solana_mode: &str,
+    program_id: &str,
 ) -> Result<WalletOutput> {
     if !quiet {
         println!(
             "\n{}",
             format!("=== {} ===", chain.to_uppercase()).blue().bold()
         );
+        if chain == "solana" {
+            print_solana_mode_info(solana_mode);
+        }
     }
 
     let count = specific_index.map_or(num, |_| 1);
@@ -306,7 +349,7 @@ fn generate_for_chain(
         let info = match chain {
             "evm" | "ethereum" => generate_evm(seed, &path, idx)?,
             "btc" | "bitcoin" => generate_bitcoin(seed, &path, idx)?,
-            "solana" => generate_solana(seed, &path, idx)?,
+            "solana" => generate_solana(seed, &path, idx, solana_mode, program_id)?,
             "ton" | "telegram" => generate_ton(seed, &path, idx)?,
             "doge" | "dogecoin" => generate_doge(seed, &path, idx)?,
             "xrp" | "ripple" => generate_xrp(seed, &path, idx)?,
@@ -543,7 +586,15 @@ fn generate_bitcoin(seed: &[u8], path: &str, idx: u32) -> Result<KeyInfo> {
     })
 }
 
-fn generate_solana(seed: &[u8], path: &str, idx: u32) -> Result<KeyInfo> {
+fn generate_solana(
+    seed: &[u8],
+    path: &str,
+    idx: u32,
+    mode: &str,
+    program_id: &str,
+) -> Result<KeyInfo> {
+    use std::str::FromStr;
+
     let key_pair = derive_master_key_pair_ed25519(seed);
     let child = hd_wallet::Edwards::derive_child_key_pair_with_path(&key_pair, parse_path(path));
 
@@ -551,16 +602,52 @@ fn generate_solana(seed: &[u8], path: &str, idx: u32) -> Result<KeyInfo> {
 
     let signing_key = SigningKey::from_bytes(&sk_bytes);
     let verifying_key = signing_key.verifying_key();
-    let pubkey = Pubkey::new_from_array(verifying_key.to_bytes());
+    let user_pubkey = Pubkey::new_from_array(verifying_key.to_bytes());
+
+    let (address, private_key, xprv, xpub) = match mode {
+        "pda" => {
+            let program_pubkey = if program_id.is_empty() {
+                Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap()
+            } else {
+                Pubkey::from_str(program_id).unwrap_or_else(|_| {
+                    Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap()
+                })
+            };
+            let seed_label = format!("user_deposit_{}", idx);
+            let (pda, bump) = Pubkey::find_program_address(
+                &[seed_label.as_bytes(), &user_pubkey.to_bytes()],
+                &program_pubkey,
+            );
+            let _ = bump;
+            (
+                pda.to_string(),
+                "PDA_CONTROLLED_BY_PROGRAM".to_string(),
+                None,
+                None,
+            )
+        }
+        "cold-export" => (
+            user_pubkey.to_string(),
+            "HIDDEN_FOR_SECURITY".to_string(),
+            None,
+            None,
+        ),
+        _ => (
+            user_pubkey.to_string(),
+            hex::encode(sk_bytes),
+            Some(hex::encode(sk_bytes)),
+            Some(user_pubkey.to_string()),
+        ),
+    };
 
     Ok(KeyInfo {
         index: idx,
         path: path.to_string(),
-        xprv: Some(hex::encode(sk_bytes)),
-        xpub: Some(pubkey.to_string()),
-        private_key: hex::encode(sk_bytes),
+        xprv,
+        xpub,
+        private_key,
         public_key: hex::encode(verifying_key.to_bytes()),
-        address: pubkey.to_string(),
+        address,
         wif: None,
     })
 }
