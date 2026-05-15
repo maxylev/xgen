@@ -401,9 +401,14 @@ fn generate_from_xpub(
 
     if is_ed25519_chain(chain) {
         anyhow::bail!(
-            "xpub mode is not supported for Ed25519 chains ({}) — \
-             Ed25519 uses hardened derivation which requires the private key. \
-             Use the mnemonic or --index flag instead.",
+            "xpub mode is not supported for {} (Ed25519 curve).\n\
+             Ed25519 uses hardened derivation which requires the private key.\n\
+             \n\
+             Recommendations:\n\
+             \x20  Instead, pre-generate addresses from the seed (offline):\n\
+             \x20    xgen gen --chain {} --mnemonic \"your phrase\" --num 100 --json\n\
+             \x20  Export the public keys to your hot server. No private keys exposed.",
+            chain,
             chain
         );
     }

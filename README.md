@@ -243,6 +243,46 @@ xgen gen --chain evm --mnemonic "your twelve words here" --index 42
 └─────────────────────────┴───────────────────────────────────┘
 ```
 
+## Exchange Best Practices (per Chain)
+
+Not all chains support xpub watch-only mode. Here is the recommended strategy for each chain:
+
+| Chain | Curve | xpub watch-only? | Best practice for many deposit addresses | Hot server safety |
+|-------|-------|:----------------:|------------------------------------------|:-----------------:|
+| **EVM** | secp256k1 | ✅ Excellent | xpub at account level (`m/44'/60'/0'`) | 🔒 High |
+| **Bitcoin** | secp256k1 | ✅ Excellent | xpub at account level (`m/44'/0'/0'`) | 🔒 High |
+| **Dogecoin** | secp256k1 | ✅ Good | xpub at account level (`m/44'/3'/0'`) | 🔒 High |
+| **Cardano** | Ed25519 | ⚠️ Limited | Use extended public keys (native support) | 🔒 High |
+| **XRP** | Ed25519 | ❌ No | Pre-generate from seed + export pubkeys | 🔒 High |
+| **Solana** | Ed25519 | ❌ No | **Pre-generate many keypairs** or use PDAs | 🔒 High |
+| **TON** | Ed25519 | ❌ No | Pre-generate from seed + export pubkeys | 🔒 Medium |
+| **Monero** | Ed25519 | ❌ No | Use subaddresses (built-in stealth addresses) | 🔒 High |
+
+### For xpub-supported chains (EVM, Bitcoin, Dogecoin):
+
+```bash
+# Cold wallet: generate account xpub once
+xgen gen --chain evm --mnemonic "your phrase" --index 0 --json
+# → master_xpub: xpub6DCoCpSuQZB2...
+
+# Hot server: generate unlimited deposit addresses (no private keys!)
+xgen gen --xpub "xpub6DCoCpSuQZB2..." --num 10000 --chain evm --json
+xgen gen --xpub "xpub6DCoCpSuQZB2..." --index 42 --chain evm --json
+```
+
+### For Ed25519 chains (Solana, TON, XRP, Cardano, Monero):
+
+These chains use **hardened derivation** — xpub-only derivation is mathematically impossible.
+**Pre-generate addresses from the seed offline and export only public keys:**
+
+```bash
+# Cold wallet: pre-generate 10000 addresses, export JSON
+xgen gen --chain solana --mnemonic "your phrase" --num 10000 --json > public-keys.json
+
+# Hot server: use the exported public keys to monitor deposits
+# No private keys ever touch the hot server
+```
+
 ## Real-World Exchange Workflow (EVM + Bitcoin + Solana)
 
 The complete deposit → sweep cycle using xgen, verified on real local nodes. The standard model used by crypto exchanges:
