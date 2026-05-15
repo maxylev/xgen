@@ -20,6 +20,7 @@ struct Cli {
 }
 
 #[derive(Parser)]
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     Gen {
         #[arg(short, long)]
@@ -78,6 +79,10 @@ enum Commands {
         /// Program ID for Solana PDA mode (base58)
         #[arg(long, default_value = "")]
         program_id: String,
+
+        /// Specific indexes to derive (comma-separated). Overrides --index and --num.
+        #[arg(long)]
+        indexes: Option<String>,
     },
 
     Decrypt {
@@ -145,6 +150,7 @@ fn main() -> Result<()> {
             xpub_path,
             solana_mode,
             program_id,
+            indexes,
         } => {
             let chain_lower = chain.to_lowercase();
             let base_path = get_default_path(&chain_lower, account, change, hw_sim);
@@ -172,6 +178,7 @@ fn main() -> Result<()> {
                     quiet,
                     &solana_mode,
                     &program_id,
+                    &indexes,
                 )?;
 
                 handle_output(result, json, output, encrypt, password)?;
@@ -316,6 +323,17 @@ fn print_solana_mode_info(mode: &str) {
     }
 }
 
+fn parse_indexes(indexes_str: &str) -> Result<Vec<u32>> {
+    indexes_str
+        .split(',')
+        .map(|s| {
+            s.trim()
+                .parse::<u32>()
+                .with_context(|| format!("Invalid index: '{}'", s.trim()))
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn generate_for_chain(
     seed: &[u8],
@@ -329,6 +347,7 @@ fn generate_for_chain(
     quiet: bool,
     solana_mode: &str,
     program_id: &str,
+    indexes: &Option<String>,
 ) -> Result<WalletOutput> {
     if !quiet {
         println!(
@@ -340,11 +359,17 @@ fn generate_for_chain(
         }
     }
 
-    let count = specific_index.map_or(num, |_| 1);
+    let indices: Vec<u32> = if let Some(idx_str) = indexes {
+        parse_indexes(idx_str)?
+    } else if let Some(single) = specific_index {
+        vec![single]
+    } else {
+        (0..num).collect()
+    };
+
     let mut keys = vec![];
 
-    for i in 0..count {
-        let idx = specific_index.unwrap_or(i);
+    for &idx in &indices {
         let path = build_derivation_path(base_path, idx, chain);
 
         let info = match chain {
