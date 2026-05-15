@@ -70,7 +70,8 @@ enum Commands {
         #[arg(long)]
         xpub_path: Option<String>,
 
-        /// Solana mode: full, cold-export, hsm-sim, pda (only affects Solana)
+        /// Solana mode: full (keys visible), cold-export (keys hidden),
+        /// hsm-sim (simulated HSM), pda (program-derived, receive-only)
         #[arg(long, default_value = "full")]
         solana_mode: String,
 
@@ -307,7 +308,7 @@ fn print_solana_mode_info(mode: &str) {
         ),
         "pda" => println!(
             "{}",
-            "📍 PDA MODE - Program Derived Addresses (No private key)"
+            "📍 PDA MODE - Can RECEIVE SOL but cannot sweep (controlled by program)"
                 .bright_purple()
                 .bold()
         ),
@@ -604,7 +605,7 @@ fn generate_solana(
     let verifying_key = signing_key.verifying_key();
     let user_pubkey = Pubkey::new_from_array(verifying_key.to_bytes());
 
-    let (address, private_key, xprv, xpub) = match mode {
+    let (address, private_key, xprv, xpub, wif) = match mode {
         "pda" => {
             let program_pubkey = if program_id.is_empty() {
                 Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap()
@@ -614,14 +615,14 @@ fn generate_solana(
                 })
             };
             let seed_label = format!("user_deposit_{}", idx);
-            let (pda, bump) = Pubkey::find_program_address(
+            let (pda, _bump) = Pubkey::find_program_address(
                 &[seed_label.as_bytes(), &user_pubkey.to_bytes()],
                 &program_pubkey,
             );
-            let _ = bump;
             (
                 pda.to_string(),
-                "PDA_CONTROLLED_BY_PROGRAM".to_string(),
+                "PDA_CAN_RECEIVE_ONLY_SWEEP_NEEDS_PROGRAM".to_string(),
+                None,
                 None,
                 None,
             )
@@ -631,12 +632,14 @@ fn generate_solana(
             "HIDDEN_FOR_SECURITY".to_string(),
             None,
             None,
+            None,
         ),
         _ => (
             user_pubkey.to_string(),
             hex::encode(sk_bytes),
             Some(hex::encode(sk_bytes)),
             Some(user_pubkey.to_string()),
+            None,
         ),
     };
 
@@ -648,7 +651,7 @@ fn generate_solana(
         private_key,
         public_key: hex::encode(verifying_key.to_bytes()),
         address,
-        wif: None,
+        wif,
     })
 }
 
