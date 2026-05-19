@@ -40,6 +40,9 @@ xgen gen --mnemonic "your twelve words here" --chain btc --index 7
 
 # Generate 100 Solana addresses (cold-export mode — recommended)
 xgen gen --chain solana --solana-mode cold-export --num 100 --output solana-keys.json
+
+# Derive child keys from an extended private key (xpriv)
+xgen gen --xpriv "xprv9wTYmMFdV23N2TdNG573QoEsfRr..." --chain evm --num 5
 ```
 
 ---
@@ -74,7 +77,7 @@ sudo cp target/release/xgen /usr/local/bin/
 | `--json` | Output JSON instead of terminal display | |
 | `--output` / `-o` | Save output to file | stdout |
 | `--qr` | Show QR code for each address | |
-| `--encrypt` | Encrypt JSON output with password | |
+| `--encrypt` | Encrypt JSON output (use with `--password` or prompt) | |
 | `--password` | Provide encryption/decryption password non-interactively | |
 
 #### Derivation options
@@ -95,6 +98,13 @@ sudo cp target/release/xgen /usr/local/bin/
 | `--xpub` | Generate addresses from BIP32 xpub (no private key needed) |
 | `--xpub-path` | Base derivation path for xpub (default: account path) |
 
+#### xpriv derivation options (all chains)
+
+| Option | Description |
+|--------|-------------|
+| `--xpriv` | Generate keys from BIP32 xpriv (EVM/BTC) or 64-byte hex (Solana) |
+| `--xpriv-path` | Base derivation path for xpriv (default: account path) |
+
 #### Solana-specific options
 
 | Option | Description | Default |
@@ -114,17 +124,17 @@ sudo cp target/release/xgen /usr/local/bin/
 
 ## Supported Chains
 
-| Chain | Curve | Coin Type | BIP44 Path | Address Format | xpub watch-only |
-|-------|-------|:---------:|------------|----------------|:---------------:|
-| EVM | secp256k1 | 60 | `m/44'/60'/{account}'/{change}/{index}` | `0x...` EIP-55 checksummed | ✅ |
-| Bitcoin | secp256k1 | 0 | `m/44'/0'/{account}'/{change}/{index}` | `1...` P2PKH | ✅ |
-| Solana | Ed25519 (SLIP-0010) | 501 | `m/44'/501'/{account}'/{change}'` | Base58 | ❌ (hardened) |
+| Chain | Curve | Coin Type | BIP44 Path | Address Format | xpub watch-only | xpriv |
+|-------|-------|:---------:|------------|----------------|:---------------:|:-----:|
+| EVM | secp256k1 | 60 | `m/44'/60'/{account}'/{change}/{index}` | `0x...` EIP-55 checksummed | ✅ | ✅ |
+| Bitcoin | secp256k1 | 0 | `m/44'/0'/{account}'/{change}/{index}` | `bc1q...` P2WPKH | ✅ | ✅ |
+| Solana | Ed25519 (SLIP-0010) | 501 | `m/44'/501'/{account}'/{change}'` | Base58 | ❌ (hardened) | ✅ |
 
 ### Address Generation Correctness
 
 - **EVM:** Uses EIP-55 checksums — computes Keccak256 of the **address hex string** (not the public key) to produce mixed-case checksums compatible with all wallets and exchanges.
-- **Bitcoin:** Uses standard P2PKH (Pay-to-Public-Key-Hash) addresses with WIF private key format.
-- **Solana:** Uses SLIP-0010 compliant Ed25519 derivation (no modulo order reduction) — compatible with Phantom and Solflare wallets when using the same mnemonic.
+- **Bitcoin:** Uses Native SegWit P2WPKH (Bech32) addresses starting with `bc1q` with WIF private key format. Standard compressed public key derivation (BIP32 compliance).
+- **Solana:** Uses SLIP-0010 compliant Ed25519 derivation with all-hardened path segments (no modulo order reduction) — compatible with Phantom and Solflare wallets when using the same mnemonic.
 
 ---
 
@@ -172,7 +182,7 @@ for i in {0..9}; do
 done
 ```
 
-#### Solana (Ed25519 — no xpub support)
+#### Solana (Ed25519 — xpriv and seed-based derivation)
 
 ```bash
 # === Option A: Cold export (recommended) ===
@@ -182,7 +192,13 @@ xgen gen --chain solana --mnemonic "your phrase" --solana-mode cold-export --num
 xgen gen --chain solana --mnemonic "your phrase" --account 1 --index 0   # user 1
 xgen gen --chain solana --mnemonic "your phrase" --account 2 --index 0   # user 2
 
-# === Option C: PDA addresses (receive-only) ===
+# === Option C: xpriv derivation (64-byte hex: key + chain code) ===
+xgen gen --chain solana --mnemonic "your phrase" --index 0 --json  # get master_xpub
+# Construct 64-byte xpriv: priv_key(32 bytes) + chain_code(32 bytes from master_xpub)
+xgen gen --xpriv "<64-byte-hex>" --chain solana --num 100 --json \
+  --solana-mode cold-export
+
+# === Option D: PDA addresses (receive-only) ===
 xgen gen --chain solana --solana-mode pda --mnemonic "your phrase" --num 100 --json
 ```
 
@@ -236,8 +252,13 @@ solana transfer --keypair key.json --allow-unfunded-recipient "$HOT_WALLET" ALL
 ## Encryption
 
 ```bash
-# Encrypt wallet output
-xgen gen --chain solana --encrypt "mypassword" --output wallet.enc
+# Encrypt wallet output (password from command line)
+xgen gen --chain solana --password "mypassword" --output wallet.enc
+
+# Encrypt with interactive prompt (secure — no password in shell history)
+xgen gen --chain solana --encrypt --output wallet.enc
+# → Enter encryption password: 
+# → Confirm encryption password:
 
 # Decrypt
 xgen decrypt wallet.enc
@@ -245,7 +266,7 @@ xgen decrypt wallet.enc --output wallet.json
 xgen decrypt wallet.enc --password "mypassword"   # non-interactive
 ```
 
-Uses AES-256-GCM with scrypt key derivation (N=2^15, r=8, p=1). Wallet version field is enforced during decryption.
+Uses AES-256-GCM with scrypt key derivation (N=2^16, r=8, p=1). Salt and nonce are generated via OS-level CSPRNG (`OsRng`). Wallet version field is enforced during decryption.
 
 ---
 
@@ -269,7 +290,7 @@ xgen gen --chain evm --num 100
 
 ```toml
 [dependencies]
-xgen = "1.0"
+xgen = "1.1"
 bip39 = "2.2"
 ```
 
@@ -319,6 +340,36 @@ let wallet = generate_from_xpub(
 )?;
 ```
 
+### xpriv Derivation Mode
+
+```rust
+use xgen::generate_from_xpriv;
+
+// secp256k1 (EVM/BTC): standard BIP32 xpriv base58
+let wallet = generate_from_xpriv(
+    "xprv9wTYmMFdV23N2TdNG573QoEsfRr...",
+    "m/44'/60'/0'/0",
+    None,            // index (None = use num)
+    5,               // num
+    "evm",
+    "full",          // solana_mode (ignored for evm)
+    "",              // program_id (ignored for evm)
+    &None,           // explicit indexes
+)?;
+
+// Ed25519 (Solana): 64-byte hex xpriv (private_key || chain_code)
+let wallet = generate_from_xpriv(
+    "a1b2c3...64_byte_hex...",
+    "m/44'/501'/0'/0'",
+    Some(0),         // specific index
+    1,               // num
+    "solana",
+    "cold-export",   // solana_mode
+    "",              // program_id
+    &None,           // explicit indexes
+)?;
+```
+
 ### Encryption / Decryption
 
 ```rust
@@ -338,6 +389,8 @@ let decrypted = decrypt_data(&enc, "password")?;
 |-----------------|-------------|
 | `generate_for_chain(...)` | Generate HD wallet addresses for a chain |
 | `generate_from_xpub(...)` | Watch-only address generation from xpub |
+| `generate_from_xpriv(...)` | Key derivation from extended private key (BIP32 or SLIP-0010) |
+| `derive_slip10_ed25519_child(...)` | SLIP-0010 child derivation from parent 64-byte state |
 | `generate_evm(...)` / `generate_bitcoin(...)` / `generate_solana(...)` | Single-chain generators |
 | `encrypt_data(...)` / `decrypt_data(...)` | AES-256-GCM encrypt/decrypt |
 | `eth_address(&[u8])` | EIP-55 checksummed EVM address from pubkey |
@@ -393,10 +446,15 @@ xgen/
 ## Security
 
 - **EIP-55 compliance:** EVM addresses use correct checksum (Keccak256 of address hex string)
-- **SLIP-0010:** Solana Ed25519 derivation is compatible with Phantom and Solflare
+- **SLIP-0010:** Solana Ed25519 derivation enforces all-hardened path segments for security and Phantom/Solfare compatibility
+- **BIP32 compression:** Bitcoin public keys enforce standard compressed format (33 bytes)
+- **CSPRNG:** Salt and nonce generated via `OsRng` (OS-level entropy)
 - **Version enforcement:** Encrypted wallets validate version on decrypt
+- **Interactive password prompt:** Use `--encrypt` without `--password` for secure, non-history-leaking password entry
+- **Memory hygiene:** Sensitive keys zeroized on drop via `zeroize` crate
 - **Never share your mnemonic or private keys**
 - Use `--encrypt` when saving to disk
+- Always prefer the interactive `--encrypt` prompt over `--password` on the command line
 - Generate addresses offline when possible
 - For Solana, prefer `cold-export` or `pda` mode on hot servers
 - Hardware wallets are always safer for production use

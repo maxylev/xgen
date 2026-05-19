@@ -632,7 +632,7 @@ mod encrypt_decrypt {
             VALID_12_MNEMONIC,
             "--index",
             "0",
-            "--encrypt",
+            "--password",
             "mypass",
         ]);
         assert!(out.contains('{'), "Encrypted output should be JSON");
@@ -661,7 +661,7 @@ mod encrypt_decrypt {
             VALID_12_MNEMONIC,
             "--index",
             "0",
-            "--encrypt",
+            "--password",
             "mypass",
             "--output",
             tmp.path(),
@@ -704,7 +704,7 @@ mod encrypt_decrypt {
             VALID_12_MNEMONIC,
             "--index",
             "0",
-            "--encrypt",
+            "--password",
             password,
             "--output",
             enc.path(),
@@ -736,7 +736,7 @@ mod encrypt_decrypt {
             VALID_12_MNEMONIC,
             "--index",
             "0",
-            "--encrypt",
+            "--password",
             "correctpass",
             "--output",
             enc.path(),
@@ -790,7 +790,7 @@ mod encrypt_decrypt {
             VALID_12_MNEMONIC,
             "--index",
             "0",
-            "--encrypt",
+            "--password",
             "samepass",
             "--json",
         ]);
@@ -802,7 +802,7 @@ mod encrypt_decrypt {
             VALID_12_MNEMONIC,
             "--index",
             "0",
-            "--encrypt",
+            "--password",
             "samepass",
             "--json",
         ]);
@@ -823,7 +823,7 @@ mod encrypt_decrypt {
             VALID_12_MNEMONIC,
             "--index",
             "0",
-            "--encrypt",
+            "--password",
             "pass",
             "--output",
             enc.path(),
@@ -846,7 +846,7 @@ mod encrypt_decrypt {
                 VALID_12_MNEMONIC,
                 "--index",
                 "0",
-                "--encrypt",
+                "--password",
                 "testpass",
             ]);
             assert!(
@@ -973,7 +973,7 @@ mod help {
     #[test]
     fn test_version() {
         let out = assert_success(&["--version"]);
-        assert!(out.contains("1.0.0"), "Version should be 1.0.0");
+        assert!(out.contains("1.1.0"), "Version should be 1.1.0");
     }
 }
 
@@ -1146,5 +1146,386 @@ mod edge_cases {
             "1",
         ]);
         assert!(!ok, "Invalid program_id should fail: {}", stderr);
+    }
+}
+
+// ==================== XPRIV MODE ====================
+
+mod xpriv_mode {
+    use super::*;
+
+    fn json_val(args: &[&str]) -> serde_json::Value {
+        let mut full_args = args.to_vec();
+        full_args.push("--json");
+        let out = assert_success(&full_args);
+        serde_json::from_str(&out).expect("Should be valid JSON")
+    }
+
+    fn xpriv_from_mnemonic(chain: &str, index: u32) -> String {
+        let v = json_val(&[
+            "gen",
+            "--chain",
+            chain,
+            "--mnemonic",
+            VALID_12_MNEMONIC,
+            "--index",
+            &index.to_string(),
+        ]);
+        v["keys"][0]["xprv"]
+            .as_str()
+            .expect("Should have xprv field")
+            .to_string()
+    }
+
+    #[test]
+    fn test_xpriv_evm_basic() {
+        let out = assert_success(&[
+            "gen",
+            "--xpriv",
+            "xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi",
+            "--chain",
+            "evm",
+            "--index",
+            "0",
+        ]);
+        assert!(out.contains("DERIVING FROM xpriv"));
+        assert!(out.contains("0x"), "EVM xpriv should produce 0x address");
+        assert!(out.contains("xprv"), "Should show child xprv");
+        assert!(out.contains("Private"), "Should show private key");
+    }
+
+    #[test]
+    fn test_xpriv_btc_basic() {
+        let out = assert_success(&[
+            "gen",
+            "--xpriv",
+            "xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi",
+            "--chain",
+            "btc",
+            "--index",
+            "0",
+        ]);
+        assert!(out.contains("DERIVING FROM xpriv"));
+        assert!(out.contains("WIF"), "BTC xpriv should produce WIF");
+        assert!(out.contains("xprv"));
+    }
+
+    #[test]
+    fn test_xpriv_evm_deterministic() {
+        let xprv = xpriv_from_mnemonic("evm", 0);
+
+        let out1 = assert_success(&[
+            "gen", "--xpriv", &xprv, "--chain", "evm", "--index", "0", "--json",
+        ]);
+        let out2 = assert_success(&[
+            "gen", "--xpriv", &xprv, "--chain", "evm", "--index", "0", "--json",
+        ]);
+        assert_eq!(
+            out1, out2,
+            "Same xpriv + index should produce identical output"
+        );
+    }
+
+    #[test]
+    fn test_xpriv_evm_consistent_chaining() {
+        let xprv_parent = xpriv_from_mnemonic("evm", 0);
+
+        // Derive child 0 from parent xpriv
+        let from_parent = json_val(&[
+            "gen",
+            "--xpriv",
+            &xprv_parent,
+            "--chain",
+            "evm",
+            "--index",
+            "0",
+        ]);
+        let child_xprv = from_parent["keys"][0]["xprv"].as_str().unwrap();
+
+        // Derive grandchild 0 from child's xpriv
+        let from_child = json_val(&[
+            "gen", "--xpriv", child_xprv, "--chain", "evm", "--index", "0",
+        ]);
+
+        // Derive grandchild 0 directly from parent xpriv (skipping child)
+        let from_parent_deep = json_val(&[
+            "gen",
+            "--xpriv",
+            &xprv_parent,
+            "--chain",
+            "evm",
+            "--index",
+            "0",
+        ]);
+
+        // Child xprv and parent xprv should produce different keys at same index
+        assert_ne!(
+            from_child["keys"][0]["address"], from_parent_deep["keys"][0]["address"],
+            "Different-depth parents should produce different keys"
+        );
+
+        // But both should be valid addresses
+        assert!(from_child["keys"][0]["address"]
+            .as_str()
+            .unwrap()
+            .starts_with("0x"));
+        assert!(from_parent_deep["keys"][0]["address"]
+            .as_str()
+            .unwrap()
+            .starts_with("0x"));
+    }
+
+    #[test]
+    fn test_xpriv_btc_consistent_chaining() {
+        let xprv_parent = xpriv_from_mnemonic("btc", 0);
+
+        // Derive child 0 from parent xpriv
+        let from_parent = json_val(&[
+            "gen",
+            "--xpriv",
+            &xprv_parent,
+            "--chain",
+            "btc",
+            "--index",
+            "0",
+        ]);
+        let child_xprv = from_parent["keys"][0]["xprv"].as_str().unwrap();
+
+        // Derive grandchild 0 from child's xpriv
+        let from_child = json_val(&[
+            "gen", "--xpriv", child_xprv, "--chain", "btc", "--index", "0",
+        ]);
+
+        assert!(from_child["keys"][0]["address"]
+            .as_str()
+            .unwrap()
+            .starts_with("bc1"));
+        assert!(from_child["keys"][0]["wif"].is_string());
+    }
+
+    #[test]
+    fn test_xpriv_evm_multi_index() {
+        let xprv = xpriv_from_mnemonic("evm", 0);
+        let out = assert_success(&["gen", "--xpriv", &xprv, "--chain", "evm", "--num", "3"]);
+        assert!(out.contains("Index 0"));
+        assert!(out.contains("Index 1"));
+        assert!(out.contains("Index 2"));
+    }
+
+    #[test]
+    fn test_xpriv_with_indexes() {
+        let xprv = xpriv_from_mnemonic("evm", 0);
+        let out = assert_success(&[
+            "gen",
+            "--xpriv",
+            &xprv,
+            "--chain",
+            "evm",
+            "--indexes",
+            "7,42,99",
+        ]);
+        assert!(out.contains("Index 7"));
+        assert!(out.contains("Index 42"));
+        assert!(out.contains("Index 99"));
+    }
+
+    #[test]
+    fn test_xpriv_json_output() {
+        let xprv = xpriv_from_mnemonic("evm", 0);
+        let v = json_val(&["gen", "--xpriv", &xprv, "--chain", "evm", "--index", "5"]);
+        assert_eq!(v["mnemonic"], "Derived from parent xpriv");
+        assert!(v["master_xprv"].is_string());
+        assert!(v["keys"][0]["address"].is_string());
+        assert!(v["keys"][0]["private_key"].is_string());
+        assert!(v["keys"][0]["xprv"].is_string());
+        assert!(v["keys"][0]["xpub"].is_string());
+    }
+
+    #[test]
+    fn test_xpriv_evm_with_passphrase_deterministic() {
+        let xprv_mnemonic = json_val(&[
+            "gen",
+            "--chain",
+            "evm",
+            "--mnemonic",
+            VALID_12_MNEMONIC,
+            "--passphrase",
+            "mypass",
+            "--index",
+            "0",
+        ]);
+        let xprv = xprv_mnemonic["keys"][0]["xprv"].as_str().unwrap();
+
+        let out1 = json_val(&["gen", "--xpriv", xprv, "--chain", "evm", "--index", "5"]);
+        let out2 = json_val(&["gen", "--xpriv", xprv, "--chain", "evm", "--index", "5"]);
+
+        assert_eq!(
+            out1["keys"][0]["address"], out2["keys"][0]["address"],
+            "Same xpriv + passphrase + index should produce identical output"
+        );
+    }
+
+    #[test]
+    fn test_xpriv_solana_deterministic() {
+        use bip39::Mnemonic;
+        use xgen::{derive_slip10_ed25519, parse_path};
+
+        let mnemonic = Mnemonic::parse_in(bip39::Language::English, VALID_12_MNEMONIC).unwrap();
+        let seed = mnemonic.to_seed("");
+        let path = parse_path("m/44'/501'/0'/0'").unwrap();
+        let account_state = derive_slip10_ed25519(&seed, &path).unwrap();
+        let xpriv_hex = hex::encode(account_state);
+
+        let out1 = assert_success(&[
+            "gen", "--xpriv", &xpriv_hex, "--chain", "solana", "--index", "0", "--json",
+        ]);
+        let out2 = assert_success(&[
+            "gen", "--xpriv", &xpriv_hex, "--chain", "solana", "--index", "0", "--json",
+        ]);
+        assert_eq!(
+            out1, out2,
+            "Same xpriv + index should produce identical output"
+        );
+    }
+
+    #[test]
+    fn test_xpriv_solana_cold_export() {
+        use bip39::Mnemonic;
+        use xgen::{derive_slip10_ed25519, parse_path};
+
+        let mnemonic = Mnemonic::parse_in(bip39::Language::English, VALID_12_MNEMONIC).unwrap();
+        let seed = mnemonic.to_seed("");
+        let path = parse_path("m/44'/501'/0'/0'").unwrap();
+        let account_state = derive_slip10_ed25519(&seed, &path).unwrap();
+        let xpriv_hex = hex::encode(account_state);
+
+        let v = json_val(&[
+            "gen",
+            "--xpriv",
+            &xpriv_hex,
+            "--chain",
+            "solana",
+            "--solana-mode",
+            "cold-export",
+            "--index",
+            "0",
+        ]);
+
+        assert_eq!(
+            v["keys"][0]["private_key"], "HIDDEN_FOR_SECURITY",
+            "cold-export mode should hide private key"
+        );
+        assert!(v["keys"][0]["address"].is_string());
+    }
+
+    #[test]
+    fn test_xpriv_solana_pda() {
+        use bip39::Mnemonic;
+        use xgen::{derive_slip10_ed25519, parse_path};
+
+        let mnemonic = Mnemonic::parse_in(bip39::Language::English, VALID_12_MNEMONIC).unwrap();
+        let seed = mnemonic.to_seed("");
+        let path = parse_path("m/44'/501'/0'/0'").unwrap();
+        let account_state = derive_slip10_ed25519(&seed, &path).unwrap();
+        let xpriv_hex = hex::encode(account_state);
+
+        let out = assert_success(&[
+            "gen",
+            "--xpriv",
+            &xpriv_hex,
+            "--chain",
+            "solana",
+            "--solana-mode",
+            "pda",
+            "--index",
+            "0",
+        ]);
+        assert!(out.contains("PDA MODE"));
+        assert!(out.contains("Address"));
+    }
+
+    #[test]
+    fn test_xpriv_solana_num() {
+        use bip39::Mnemonic;
+        use xgen::{derive_slip10_ed25519, parse_path};
+
+        let mnemonic = Mnemonic::parse_in(bip39::Language::English, VALID_12_MNEMONIC).unwrap();
+        let seed = mnemonic.to_seed("");
+        let path = parse_path("m/44'/501'/0'/0'").unwrap();
+        let account_state = derive_slip10_ed25519(&seed, &path).unwrap();
+        let xpriv_hex = hex::encode(account_state);
+
+        let out = assert_success(&[
+            "gen", "--xpriv", &xpriv_hex, "--chain", "solana", "--num", "3",
+        ]);
+        assert!(out.contains("Index 0"));
+        assert!(out.contains("Index 1"));
+        assert!(out.contains("Index 2"));
+    }
+
+    #[test]
+    fn test_xpriv_invalid_ed25519_hex() {
+        assert_fails(&[
+            "gen", "--xpriv", "deadbeef", "--chain", "solana", "--num", "1",
+        ]);
+    }
+
+    #[test]
+    fn test_xpriv_invalid_secp256k1() {
+        assert_fails(&[
+            "gen",
+            "--xpriv",
+            "xprvNotAValidKey",
+            "--chain",
+            "evm",
+            "--num",
+            "1",
+        ]);
+    }
+
+    #[test]
+    fn test_xpriv_path_override() {
+        let xprv = xpriv_from_mnemonic("evm", 0);
+        let out = assert_success(&[
+            "gen",
+            "--xpriv",
+            &xprv,
+            "--xpriv-path",
+            "m/44'/60'/0'/0",
+            "--chain",
+            "evm",
+            "--index",
+            "5",
+        ]);
+        assert!(out.contains("Index 5"));
+        assert!(out.contains("0x"));
+    }
+
+    #[test]
+    fn test_xpriv_encrypt_output() {
+        let xprv = xpriv_from_mnemonic("evm", 0);
+        let out = assert_success(&[
+            "gen",
+            "--xpriv",
+            &xprv,
+            "--chain",
+            "evm",
+            "--index",
+            "0",
+            "--password",
+            "testpass",
+        ]);
+        assert!(out.contains("\"ciphertext\""));
+        assert!(out.contains("\"salt\""));
+    }
+
+    #[test]
+    fn test_xpriv_help() {
+        let out = assert_success(&["gen", "--help"]);
+        assert!(out.contains("--xpriv"), "Help should list --xpriv");
+        assert!(
+            out.contains("--xpriv-path"),
+            "Help should list --xpriv-path"
+        );
     }
 }

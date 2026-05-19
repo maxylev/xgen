@@ -1,6 +1,6 @@
 [package]
 name = "xgen"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 authors = ["maxylev"]
 description = "Fast multi-chain HD wallet CLI: EVM, Bitcoin, Solana"
@@ -28,6 +28,7 @@ scrypt = "0.12"
 rand = "0.10.1"
 base64 = "0.22"
 rpassword = "7.5"
+zeroize = { version = "1.8", features = ["derive"] }
 hmac = "0.13"
 sha2 = "0.11"
 

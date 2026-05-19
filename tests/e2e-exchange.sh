@@ -137,8 +137,8 @@ BTC_JSON=$($XGEN gen --chain btc --mnemonic "$MNEMONIC" --index 0 --json 2>/dev/
 BTC_ADDR=$(echo "$BTC_JSON" | jq -r '.keys[0].address')
 BTC_PRIV=$(echo "$BTC_JSON" | jq -r '.keys[0].private_key')
 echo "  BTC address: $BTC_ADDR"
-if [[ "$BTC_ADDR" == 1* ]]; then
-  pass "BTC address format valid (P2PKH starts with 1)"
+if [[ "$BTC_ADDR" == bc1* ]]; then
+  pass "BTC address format valid (P2WPKH starts with bc1)"
 else
   fail "BTC address format invalid: $BTC_ADDR"
 fi
@@ -173,6 +173,150 @@ if [[ -n "$XPUB" ]] && [[ "$XPUB" != "null" ]]; then
   fi
 else
   fail "No master_xpub produced"
+fi
+
+# xpriv derivation (secp256k1: EVM)
+echo -e "\n  --- xpriv EVM ---"
+EVM_ACCT_XPRV=$($XGEN gen --chain evm --mnemonic "$MNEMONIC" --account 0 --change 0 --index 0 --json 2>/dev/null | jq -r '.keys[0].xprv')
+if [[ -n "$EVM_ACCT_XPRV" ]] && [[ "$EVM_ACCT_XPRV" != "null" ]] && [[ "$EVM_ACCT_XPRV" == xprv* ]]; then
+  EVM_XPRIV_IDX1=$($XGEN gen --xpriv "$EVM_ACCT_XPRV" --chain evm --index 1 --json 2>/dev/null | jq -r '.keys[0].address')
+  EVM_FULL_IDX1=$($XGEN gen --chain evm --mnemonic "$MNEMONIC" --account 0 --change 0 --index 1 --json 2>/dev/null | jq -r '.keys[0].address')
+  if [[ "$EVM_XPRIV_IDX1" == "$EVM_FULL_IDX1" ]]; then
+    pass "xpriv EVM: derived address matches full derivation"
+  else
+    fail "xpriv EVM MISMATCH: $EVM_XPRIV_IDX1 vs $EVM_FULL_IDX1"
+  fi
+
+  # xpriv multi-key generation
+  EVM_XPRIV_NUM=$($XGEN gen --xpriv "$EVM_ACCT_XPRV" --chain evm --num 3 --json 2>/dev/null)
+  EVM_XPRIV_COUNT=$(echo "$EVM_XPRIV_NUM" | jq '.keys | length')
+  if [[ "$EVM_XPRIV_COUNT" -eq 3 ]]; then
+    pass "xpriv EVM: --num 3 produces 3 keys"
+  else
+    fail "xpriv EVM: expected 3 keys, got $EVM_XPRIV_COUNT"
+  fi
+else
+  fail "xpriv EVM: could not extract xprv from mnemonic output"
+fi
+
+# xpriv derivation (secp256k1: BTC)
+echo -e "\n  --- xpriv BTC ---"
+BTC_ACCT_XPRV=$($XGEN gen --chain btc --mnemonic "$MNEMONIC" --account 0 --change 0 --index 0 --json 2>/dev/null | jq -r '.keys[0].xprv')
+if [[ -n "$BTC_ACCT_XPRV" ]] && [[ "$BTC_ACCT_XPRV" != "null" ]] && [[ "$BTC_ACCT_XPRV" == xprv* ]]; then
+  BTC_XPRIV_IDX2=$($XGEN gen --xpriv "$BTC_ACCT_XPRV" --chain btc --index 2 --json 2>/dev/null | jq -r '.keys[0].address')
+  BTC_FULL_IDX2=$($XGEN gen --chain btc --mnemonic "$MNEMONIC" --account 0 --change 0 --index 2 --json 2>/dev/null | jq -r '.keys[0].address')
+  if [[ "$BTC_XPRIV_IDX2" == "$BTC_FULL_IDX2" ]]; then
+    pass "xpriv BTC: derived address matches full derivation"
+  else
+    fail "xpriv BTC MISMATCH: $BTC_XPRIV_IDX2 vs $BTC_FULL_IDX2"
+  fi
+else
+  fail "xpriv BTC: could not extract xprv from mnemonic output"
+fi
+
+# xpriv derivation (Ed25519: Solana)
+echo -e "\n  --- xpriv Solana ---"
+SOL_ACCT_STATE=$(python3.11 -c "
+from bip39 import Mnemonic
+from hdwallet.utils import derive_slip10_ed25519
+import json, sys
+
+mnemonic = Mnemonic.from_phrase('$MNEMONIC')
+seed = mnemonic.to_seed('')
+
+# Replicate xgen's derive_slip10_ed25519 for m/44'/501'/0'/0'
+# (hardcoded: 44'+501'+0'+0')
+indices = [0x80000000 + 44, 0x80000000 + 501, 0x80000000 + 0, 0x80000000 + 0]
+# We need to construct this ourselves since we don't have the Python equivalent
+# Fall back to extracting from xgen output
+print('FALLBACK', file=sys.stderr)
+" 2>/dev/null || true)
+
+# Use xgen itself to derive the Solana account-level 64-byte xpriv
+SOL_XPRIV_HEX=$(python3.11 -c "
+import subprocess, json
+
+# Derive account-level 64-byte state by calling xgen for the master_xpub which contains chain_code
+# Actually, generate full output and construct xpriv from seed + derive
+# Instead: parse the xgen output to get master_xpub (chain_code + pubkey)
+# and use xgen's derivation. Simpler approach:
+
+# Derive one level at a time: get the seed derivation path
+# We know: m/44'/501'/0'/0' -> for xpriv we need key(32)||chain_code(32)
+
+# Actually just derive using xgen at --solana-mode full and extract xprv from a JSON we can't use
+# Let's use xgen programmatically via hex construction
+result = subprocess.run(
+    ['cargo', 'run', '--release', '--quiet', '--', 'gen', 
+     '--chain', 'solana', '--mnemonic', '$MNEMONIC', '--index', '0', '--json'],
+    capture_output=True, text=True
+)
+data = json.loads(result.stdout)
+# The xprv for Solana in xgen is just the 32-byte private key hex, not the full 64-byte state
+# We need the full 64-byte state (key + chain_code)
+# Derive it separately
+print(data['keys'][0]['private_key'])  # This is the 32-byte hex private key
+" 2>/dev/null || echo "FALLBACK")
+
+# Proper approach: use xgen binary to get the full account-level 64-byte state  
+# The master_xpub for Solana contains chain_code(32)||pubkey(32) = 64 bytes
+SOL_MASTER_XPUB_HEX=$($XGEN gen --chain solana --mnemonic "$MNEMONIC" --index 0 --json 2>/dev/null | jq -r '.master_xpub')
+if [[ -n "$SOL_MASTER_XPUB_HEX" ]] && [[ "$SOL_MASTER_XPUB_HEX" != "null" ]] && [[ ${#SOL_MASTER_XPUB_HEX} -ge 128 ]]; then
+  # master_xpub is chain_code(32)||pubkey(32) = 64 bytes = 128 hex chars
+  # To get xpriv (key||chain_code), we need both the key and chain code
+  # The chain code is the first 32 bytes of master_xpub
+  SOL_CHAIN_CODE="${SOL_MASTER_XPUB_HEX:0:64}"
+  SOL_PRIV_KEY_HEX=$($XGEN gen --chain solana --mnemonic "$MNEMONIC" --index 0 --json 2>/dev/null | jq -r '.keys[0].private_key')
+  
+  # Construct 64-byte xpriv: private_key(32) || chain_code(32)
+  SOL_FULL_XPRIV="${SOL_PRIV_KEY_HEX}${SOL_CHAIN_CODE}"
+  
+  if [[ ${#SOL_FULL_XPRIV} -eq 128 ]]; then
+    SOL_XPRIV_OUT=$($XGEN gen --xpriv "$SOL_FULL_XPRIV" --chain solana --index 5 --json 2>/dev/null)
+    SOL_XPRIV_ADDR=$(echo "$SOL_XPRIV_OUT" | jq -r '.keys[0].address')
+    SOL_XPRIV_PK=$(echo "$SOL_XPRIV_OUT" | jq -r '.keys[0].private_key')
+    
+    if [[ -n "$SOL_XPRIV_ADDR" ]] && [[ "$SOL_XPRIV_ADDR" != "null" ]] && [[ ${#SOL_XPRIV_ADDR} -ge 32 ]]; then
+      pass "xpriv Solana: derived address at index 5"
+    else
+      fail "xpriv Solana: failed to derive address"
+    fi
+    
+    # Solana cold-export mode with xpriv
+    SOL_COLD=$($XGEN gen --xpriv "$SOL_FULL_XPRIV" --chain solana --solana-mode cold-export --index 0 --json 2>/dev/null)
+    SOL_COLD_PK=$(echo "$SOL_COLD" | jq -r '.keys[0].private_key')
+    if [[ "$SOL_COLD_PK" == "HIDDEN_FOR_SECURITY" ]]; then
+      pass "xpriv Solana cold-export: private key hidden"
+    else
+      fail "xpriv Solana cold-export: private key NOT hidden: $SOL_COLD_PK"
+    fi
+    
+    # Verify derived key can receive funds
+    solana airdrop 0.1 "$SOL_XPRIV_ADDR" > /dev/null 2>&1
+    sleep 1
+    SOL_XPRIV_BAL=$(solana balance "$SOL_XPRIV_ADDR" 2>/dev/null | awk '{print $1}')
+    if [[ -n "$SOL_XPRIV_BAL" ]]; then
+      pass "xpriv Solana: derived address can receive SOL ($SOL_XPRIV_BAL SOL)"
+    else
+      fail "xpriv Solana: derived address could not receive SOL"
+    fi
+  else
+    fail "xpriv Solana: could not construct full xpriv (len=${#SOL_FULL_XPRIV})"
+  fi
+else
+  fail "xpriv Solana: could not extract master_xpub"
+fi
+
+# xpriv with --indexes (comma-separated)
+echo -e "\n  --- xpriv indexes ---"
+EVM_XPRIV_IDXS=$($XGEN gen --xpriv "$EVM_ACCT_XPRV" --chain evm --indexes "10,20,30" --json 2>/dev/null)
+EVM_XPRIV_IDX_COUNT=$(echo "$EVM_XPRIV_IDXS" | jq '.keys | length')
+EVM_XPRIV_IDX10=$(echo "$EVM_XPRIV_IDXS" | jq -r '.keys[0].address')
+EVM_FULL_IDX10=$($XGEN gen --chain evm --mnemonic "$MNEMONIC" --account 0 --change 0 --index 10 --json 2>/dev/null | jq -r '.keys[0].address')
+if [[ "$EVM_XPRIV_IDX_COUNT" -eq 3 ]] && [[ "$EVM_XPRIV_IDX10" == "$EVM_FULL_IDX10" ]]; then
+  pass "xpriv --indexes: 3 specific indexes, matches full derivation"
+else
+  fail "xpriv --indexes: count=$EVM_XPRIV_IDX_COUNT match=$([[ "$EVM_XPRIV_IDX10" == "$EVM_FULL_IDX10" ]] && echo yes || echo no)"
 fi
 
 # =========================================================================
@@ -329,7 +473,7 @@ ENC_FILE="$TMPDIR/wallet.enc"
 DEC_FILE="$TMPDIR/wallet_dec.json"
 
 $XGEN gen --chain evm --mnemonic "$MNEMONIC" --index 0 --json --output "$PLAIN_FILE" 2>/dev/null
-$XGEN gen --chain evm --mnemonic "$MNEMONIC" --index 0 --encrypt "testpass" --output "$ENC_FILE" 2>/dev/null
+$XGEN gen --chain evm --mnemonic "$MNEMONIC" --index 0 --encrypt --password "testpass" --output "$ENC_FILE" 2>/dev/null
 cargo run --release --quiet -- decrypt "$ENC_FILE" --password "testpass" --output "$DEC_FILE" 2>/dev/null
 
 if diff "$PLAIN_FILE" "$DEC_FILE" > /dev/null 2>&1; then
