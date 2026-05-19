@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "==> cargo fmt --all"
+cargo fmt --all
+git add -u
+echo "     Formatting applied."
+
+echo "==> cargo test"
+cargo test
+echo "     Tests passed."
