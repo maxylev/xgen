@@ -1,22 +1,20 @@
 [package]
 name = "xgen"
-version = "0.9.0"
+version = "1.0.0"
 edition = "2021"
 authors = ["maxylev"]
-description = "Fast multi-chain HD wallet CLI: EVM, Solana, TON, Bitcoin, Cardano, Monero and more"
+description = "Fast multi-chain HD wallet CLI: EVM, Bitcoin, Solana"
 license = "MIT"
 repository = "https://github.com/maxylev/xgen"
 homepage = "https://github.com/maxylev/xgen"
-keywords = ["crypto", "wallet", "hd-wallet", "mnemonic", "ton"]
+keywords = ["crypto", "wallet", "hd-wallet", "mnemonic", "solana"]
 categories = ["command-line-utilities", "cryptography"]
 
 [dependencies]
 clap = { version = "4.6", features = ["derive"] }
 bip39 = { version = "2.2", features = ["rand"] }
-hd-wallet = { version = "0.7", features = ["curve-secp256k1", "curve-ed25519", "serde"] }
-solana-sdk = "4"
+solana-sdk = "4.0.1"
 bitcoin = { version = "0.32", features = ["rand"] }
-ripple-keypairs = "0.1"
 ed25519-dalek = "2.2"
 tiny-keccak = { version = "2.0", features = ["keccak"] }
 anyhow = "1.0"
@@ -25,15 +23,13 @@ serde_json = "1.0"
 colored = "3.1"
 hex = "0.4"
 qr2term = "0.3"
-bs58 = "0.5"
-aes-gcm = "0.10"
+aes-gcm = "0.10.3"
 scrypt = "0.12"
-rand = "0.10"
+rand = "0.10.1"
 base64 = "0.22"
 rpassword = "7.5"
 hmac = "0.13"
 sha2 = "0.11"
-generic-ec = "0.5"
 
 [dev-dependencies]
 serde_json = "1.0"

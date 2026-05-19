@@ -116,54 +116,6 @@ mod chain_output {
     }
 
     #[test]
-    fn test_ton_output() {
-        let out = assert_success(&["gen", "--chain", "ton", "--num", "1"]);
-        assert!(out.contains("=== TON ==="));
-        let addr_line = out.lines().find(|l| l.contains("Address")).unwrap();
-        let addr = addr_line.split(':').nth(1).unwrap().trim();
-        assert!(addr.starts_with("EQ"), "TON address must start with EQ");
-    }
-
-    #[test]
-    fn test_doge_output() {
-        let out = assert_success(&["gen", "--chain", "doge", "--num", "1"]);
-        assert!(out.contains("=== DOGE ==="));
-        let addr_line = out.lines().find(|l| l.contains("Address")).unwrap();
-        let addr = addr_line.split(':').nth(1).unwrap().trim();
-        assert!(addr.starts_with('D'), "Doge address must start with D");
-    }
-
-    #[test]
-    fn test_xrp_output() {
-        let out = assert_success(&["gen", "--chain", "xrp", "--num", "1"]);
-        assert!(out.contains("=== XRP ==="));
-        let addr_line = out.lines().find(|l| l.contains("Address")).unwrap();
-        let addr = addr_line.split(':').nth(1).unwrap().trim();
-        assert!(addr.starts_with('r'), "XRP address must start with r");
-    }
-
-    #[test]
-    fn test_cardano_output() {
-        let out = assert_success(&["gen", "--chain", "cardano", "--num", "1"]);
-        assert!(out.contains("=== CARDANO ==="));
-        let addr_line = out.lines().find(|l| l.contains("Address")).unwrap();
-        let addr = addr_line.split(':').nth(1).unwrap().trim();
-        assert!(
-            addr.starts_with("addr1"),
-            "Cardano address must start with addr1"
-        );
-    }
-
-    #[test]
-    fn test_monero_output() {
-        let out = assert_success(&["gen", "--chain", "monero", "--num", "1"]);
-        assert!(out.contains("=== MONERO ==="));
-        let addr_line = out.lines().find(|l| l.contains("Address")).unwrap();
-        let addr = addr_line.split(':').nth(1).unwrap().trim();
-        assert!(addr.starts_with('4'), "Monero address must start with 4");
-    }
-
-    #[test]
     fn test_chain_alias_ethereum() {
         let out = assert_success(&["gen", "--chain", "ethereum", "--num", "1"]);
         assert!(
@@ -176,25 +128,6 @@ mod chain_output {
     fn test_chain_alias_bitcoin() {
         let out = assert_success(&["gen", "--chain", "bitcoin", "--num", "1"]);
         assert!(out.contains("WIF"), "bitcoin alias should produce WIF");
-    }
-
-    #[test]
-    fn test_chain_alias_telegram() {
-        let out = assert_success(&["gen", "--chain", "telegram", "--num", "1"]);
-        let addr_line = out.lines().find(|l| l.contains("Address")).unwrap();
-        let addr = addr_line.split(':').nth(1).unwrap().trim();
-        assert!(
-            addr.starts_with("EQ"),
-            "telegram alias should produce EQ address"
-        );
-    }
-
-    #[test]
-    fn test_chain_alias_ripple() {
-        let out = assert_success(&["gen", "--chain", "ripple", "--num", "1"]);
-        let addr_line = out.lines().find(|l| l.contains("Address")).unwrap();
-        let addr = addr_line.split(':').nth(1).unwrap().trim();
-        assert!(addr.starts_with('r'), "ripple alias should start with r");
     }
 }
 
@@ -213,7 +146,6 @@ mod mnemonic {
     #[test]
     fn test_generate_new_24_words() {
         let out = assert_success(&["gen", "--chain", "evm", "--num", "1", "--strength", "24"]);
-        // 24 words → count spaces (23 spaces = 24 words)
         let mnemonic_line = out
             .lines()
             .skip_while(|l| !l.contains("NEW MNEMONIC"))
@@ -555,9 +487,7 @@ mod output {
 
     #[test]
     fn test_json_all_chains() {
-        for chain in &[
-            "evm", "btc", "solana", "ton", "doge", "xrp", "cardano", "monero",
-        ] {
+        for chain in &["evm", "btc", "solana"] {
             let out = assert_success(&[
                 "gen",
                 "--chain",
@@ -645,9 +575,7 @@ mod output {
 
     #[test]
     fn test_qr_on_all_chains() {
-        for chain in &[
-            "evm", "btc", "solana", "ton", "doge", "xrp", "cardano", "monero",
-        ] {
+        for chain in &["evm", "btc", "solana"] {
             let out = assert_success(&[
                 "gen",
                 "--chain",
@@ -909,9 +837,7 @@ mod encrypt_decrypt {
 
     #[test]
     fn test_encrypt_all_chains() {
-        for chain in &[
-            "evm", "btc", "solana", "ton", "doge", "xrp", "cardano", "monero",
-        ] {
+        for chain in &["evm", "btc", "solana"] {
             let out = assert_success(&[
                 "gen",
                 "--chain",
@@ -1047,7 +973,7 @@ mod help {
     #[test]
     fn test_version() {
         let out = assert_success(&["--version"]);
-        assert!(out.contains("0.9.0"), "Version should be 0.9.0");
+        assert!(out.contains("1.0.0"), "Version should be 1.0.0");
     }
 }
 
@@ -1086,9 +1012,7 @@ mod edge_cases {
 
     #[test]
     fn test_all_chains_same_index() {
-        for chain in &[
-            "evm", "btc", "solana", "ton", "doge", "xrp", "cardano", "monero",
-        ] {
+        for chain in &["evm", "btc", "solana"] {
             let out = assert_success(&[
                 "gen",
                 "--chain",
@@ -1128,9 +1052,7 @@ mod edge_cases {
 
     #[test]
     fn test_all_chains_multi_address() {
-        for chain in &[
-            "evm", "btc", "solana", "ton", "doge", "xrp", "cardano", "monero",
-        ] {
+        for chain in &["evm", "btc", "solana"] {
             let out = assert_success(&[
                 "gen",
                 "--chain",
@@ -1208,5 +1130,21 @@ mod edge_cases {
             "Generated mnemonic should be 12 or 24 words, got {}",
             word_count
         );
+    }
+
+    #[test]
+    fn test_pda_mode_with_invalid_program_id_fails() {
+        let (_, stderr, ok) = xgen(&[
+            "gen",
+            "--chain",
+            "solana",
+            "--solana-mode",
+            "pda",
+            "--program-id",
+            "not-a-valid-base58-key",
+            "--num",
+            "1",
+        ]);
+        assert!(!ok, "Invalid program_id should fail: {}", stderr);
     }
 }

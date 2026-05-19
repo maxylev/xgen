@@ -1,12 +1,12 @@
 # xgen
 
-**Multi-chain HD Wallet CLI** — Generate xprv/xpub, private keys and addresses for 8 blockchains from a single BIP39 mnemonic.
+**Multi-chain HD Wallet CLI** — Generate xprv/xpub, private keys and addresses for EVM, Bitcoin, and Solana from a single BIP39 mnemonic, with EIP-55 compliant checksums and SLIP-0010 compatible Ed25519 derivation.
 
 [![CI](https://github.com/maxylev/xgen/actions/workflows/ci.yml/badge.svg)](https://github.com/maxylev/xgen/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/xgen.svg)](https://crates.io/crates/xgen)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Supports: **EVM, Bitcoin, Solana, TON, Dogecoin, XRP, Cardano, Monero**
+Supports: **EVM, Bitcoin, Solana** (cryptographically verified)
 
 ---
 
@@ -30,8 +30,8 @@ Supports: **EVM, Bitcoin, Solana, TON, Dogecoin, XRP, Cardano, Monero**
 # Generate a new EVM wallet (default: 1 address, account 0)
 xgen gen
 
-# Generate 5 TON addresses with QR codes
-xgen gen --chain ton --num 5 --qr
+# Generate 5 Solana addresses with QR codes
+xgen gen --chain solana --num 5 --qr
 
 # Import mnemonic, get specific Bitcoin address
 xgen gen --mnemonic "your twelve words here" --chain btc --index 7
@@ -65,7 +65,7 @@ sudo cp target/release/xgen /usr/local/bin/
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--chain` | Target chain: `evm`, `btc`, `solana`, `ton`, `doge`, `xrp`, `cardano`, `monero` | `evm` |
+| `--chain` | Target chain: `evm`, `btc`, `solana` | `evm` |
 | `--mnemonic` | Import existing BIP39 mnemonic | Generate new |
 | `--passphrase` / `-s` | BIP39 passphrase | empty |
 | `--strength` | Mnemonic strength: 12 or 24 words | `12` |
@@ -114,14 +114,15 @@ sudo cp target/release/xgen /usr/local/bin/
 
 | Chain | Curve | Coin Type | BIP44 Path | Address Format | xpub watch-only |
 |-------|-------|:---------:|------------|----------------|:---------------:|
-| EVM | secp256k1 | 60 | `m/44'/60'/{account}'/{change}/{index}` | `0x...` checksummed | ✅ |
+| EVM | secp256k1 | 60 | `m/44'/60'/{account}'/{change}/{index}` | `0x...` EIP-55 checksummed | ✅ |
 | Bitcoin | secp256k1 | 0 | `m/44'/0'/{account}'/{change}/{index}` | `1...` P2PKH | ✅ |
-| Dogecoin | secp256k1 | 3 | `m/44'/3'/{account}'/{change}/{index}` | `D...` | ✅ |
-| Solana | Ed25519 | 501 | `m/44'/501'/{account}'/{change}'` | Base58 | ❌ (hardened) |
-| TON | Ed25519 | 607 | `m/44'/607'/{account}'/{change}'` | `EQ...` | ❌ (hardened) |
-| XRP | Ed25519 | 144 | `m/44'/144'/{account}'/{index}` | `r...` | ❌ (hardened) |
-| Cardano | Ed25519 | 1815 | `m/1852'/1815'/{account}'/0/{index}` | `addr1...` | ❌ (hardened) |
-| Monero | Ed25519 | 128 | `m/44'/128'/{account}'/0/{index}` | `4...` | ❌ (hardened) |
+| Solana | Ed25519 (SLIP-0010) | 501 | `m/44'/501'/{account}'/{change}'` | Base58 | ❌ (hardened) |
+
+### Address Generation Correctness
+
+- **EVM:** Uses EIP-55 checksums — computes Keccak256 of the **address hex string** (not the public key) to produce mixed-case checksums compatible with all wallets and exchanges.
+- **Bitcoin:** Uses standard P2PKH (Pay-to-Public-Key-Hash) addresses with WIF private key format.
+- **Solana:** Uses SLIP-0010 compliant Ed25519 derivation (no modulo order reduction) — compatible with Phantom and Solflare wallets when using the same mnemonic.
 
 ---
 
@@ -234,7 +235,7 @@ solana transfer --keypair key.json --allow-unfunded-recipient "$HOT_WALLET" ALL
 
 ```bash
 # Encrypt wallet output
-xgen gen --chain ton --encrypt "mypassword" --output wallet.enc
+xgen gen --chain solana --encrypt "mypassword" --output wallet.enc
 
 # Decrypt
 xgen decrypt wallet.enc
@@ -242,7 +243,7 @@ xgen decrypt wallet.enc --output wallet.json
 xgen decrypt wallet.enc --password "mypassword"   # non-interactive
 ```
 
-Uses AES-256-GCM with scrypt key derivation (N=2^15, r=8, p=1).
+Uses AES-256-GCM with scrypt key derivation (N=2^15, r=8, p=1). Wallet version field is enforced during decryption.
 
 ---
 
@@ -264,7 +265,7 @@ xgen gen --chain evm --num 100
 
 ```bash
 cargo build
-cargo test          # 68 integration tests
+cargo test          # 62 integration tests
 cargo clippy -- -D warnings
 cargo build --release
 ```
@@ -285,9 +286,9 @@ bash tests/e2e-exchange.sh
 
 ```
 xgen/
-├── src/main.rs              # 950+ lines of Rust
-├── tests/integration.rs     # 1200+ lines, 68 tests
-├── Cargo.toml               # 40+ deps at latest versions
+├── src/main.rs              # ~700 lines of Rust
+├── tests/integration.rs     # ~1100 lines, 62 tests
+├── Cargo.toml               # 20+ deps at latest versions
 ├── .github/workflows/
 │   ├── ci.yml               # fmt + clippy + test on push/PR
 │   └── publish.yml          # Publish to crates.io on release
@@ -299,6 +300,9 @@ xgen/
 
 ## Security
 
+- **EIP-55 compliance:** EVM addresses use correct checksum (Keccak256 of address hex string)
+- **SLIP-0010:** Solana Ed25519 derivation is compatible with Phantom and Solflare
+- **Version enforcement:** Encrypted wallets validate version on decrypt
 - **Never share your mnemonic or private keys**
 - Use `--encrypt` when saving to disk
 - Generate addresses offline when possible

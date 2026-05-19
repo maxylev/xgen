@@ -5,12 +5,13 @@ use bitcoin::{Address, NetworkKind};
 use clap::Parser;
 use colored::*;
 use ed25519_dalek::SigningKey;
-use hd_wallet::HdWallet;
 use qr2term::print_qr;
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 use std::fs;
 use std::str::FromStr;
+
+const HARDENED: u32 = 0x80000000;
 
 #[derive(Parser)]
 #[command(author, version, about = "xgen - Multi-chain HD Wallet CLI")]
@@ -30,6 +31,7 @@ enum Commands {
         passphrase: String,
 
         #[arg(short, long, default_value = "evm")]
+        /// Target chain: `evm`, `btc`, `solana`
         chain: String,
 
         #[arg(short, long)]
@@ -200,11 +202,6 @@ fn get_default_path(chain: &str, account: u32, change: u32, _hw_sim: bool) -> St
         "evm" | "ethereum" => format!("m/44'/60'/{account}'/{change}/0"),
         "btc" | "bitcoin" => format!("m/44'/0'/{account}'/{change}/0"),
         "solana" => format!("m/44'/501'/{account}'/{change}'"),
-        "ton" | "telegram" => format!("m/44'/607'/{account}'/{change}'"),
-        "cardano" | "ada" => format!("m/1852'/1815'/{account}'/0/0"),
-        "monero" | "xmr" => format!("m/44'/128'/{account}'/0/0"),
-        "doge" | "dogecoin" => format!("m/44'/3'/{account}'/{change}/0"),
-        "xrp" | "ripple" => format!("m/44'/144'/{account}'/{change}/0"),
         _ => format!("m/44'/60'/{account}'/{change}/0"),
     }
 }
@@ -234,44 +231,36 @@ fn get_or_generate_mnemonic(
 }
 
 fn is_ed25519_chain(chain: &str) -> bool {
-    matches!(
-        chain,
-        "solana" | "ton" | "telegram" | "xrp" | "ripple" | "cardano" | "ada" | "monero" | "xmr"
-    )
+    matches!(chain, "solana")
 }
 
-fn derive_master_key_pair_ed25519(
-    seed: &[u8],
-) -> hd_wallet::ExtendedKeyPair<hd_wallet::curves::Ed25519> {
-    use generic_ec::{Scalar, SecretScalar};
-    use hd_wallet::{ChainCode, ExtendedSecretKey};
-
+fn derive_slip10_ed25519(seed: &[u8], path: &[u32]) -> [u8; 64] {
     use hmac::{KeyInit, Mac};
     let mut mac = <hmac::Hmac<sha2::Sha512>>::new_from_slice(b"ed25519 seed")
         .expect("HMAC accepts any key length");
     mac.update(seed);
-    let result = mac.finalize().into_bytes();
+    let mut i = mac.finalize().into_bytes();
 
-    let mut chain: ChainCode = [0u8; 32];
-    chain.copy_from_slice(&result[32..]);
-
-    let mut scalar = Scalar::<hd_wallet::curves::Ed25519>::from_be_bytes_mod_order(&result[..32]);
-    let secret_key = SecretScalar::new(&mut scalar);
-
-    ExtendedSecretKey {
-        secret_key,
-        chain_code: chain,
+    for &idx in path {
+        let mut mac = <hmac::Hmac<sha2::Sha512>>::new_from_slice(&i[32..])
+            .expect("HMAC accepts any key length");
+        mac.update(&[0u8]);
+        mac.update(&i[..32]);
+        mac.update(&idx.to_be_bytes());
+        i = mac.finalize().into_bytes();
     }
-    .into()
+    let mut res = [0u8; 64];
+    res.copy_from_slice(&i);
+    res
 }
 
-fn parse_path(path_str: &str) -> Vec<u32> {
+fn parse_path(path_str: &str) -> Result<Vec<u32>> {
     let trimmed = path_str
         .strip_prefix("m/")
         .or_else(|| path_str.strip_prefix("m"))
         .unwrap_or(path_str);
     if trimmed.is_empty() {
-        return vec![];
+        return Ok(vec![]);
     }
     let mut indexes = Vec::new();
     for part in trimmed.split('/') {
@@ -280,21 +269,16 @@ fn parse_path(path_str: &str) -> Vec<u32> {
             continue;
         }
         if let Some(num_str) = part.strip_suffix('\'') {
-            let num: u32 = num_str.parse().unwrap_or(0);
-            indexes.push(num + hd_wallet::H);
+            let num: u32 = num_str
+                .parse()
+                .context("Invalid hardened path segment")?;
+            indexes.push(num + HARDENED);
         } else {
-            let num: u32 = part.parse().unwrap_or(0);
+            let num: u32 = part.parse().context("Invalid path segment")?;
             indexes.push(num);
         }
     }
-    indexes
-}
-
-fn scalar_to_32_bytes<E: generic_ec::Curve>(scalar: &generic_ec::SecretScalar<E>) -> [u8; 32] {
-    let encoded = scalar.as_ref().to_be_bytes();
-    let mut arr = [0u8; 32];
-    arr.copy_from_slice(encoded.as_ref());
-    arr
+    Ok(indexes)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -376,12 +360,7 @@ fn generate_for_chain(
             "evm" | "ethereum" => generate_evm(seed, &path, idx)?,
             "btc" | "bitcoin" => generate_bitcoin(seed, &path, idx)?,
             "solana" => generate_solana(seed, &path, idx, solana_mode, program_id)?,
-            "ton" | "telegram" => generate_ton(seed, &path, idx)?,
-            "doge" | "dogecoin" => generate_doge(seed, &path, idx)?,
-            "xrp" | "ripple" => generate_xrp(seed, &path, idx)?,
-            "cardano" | "ada" => generate_cardano(seed, &path, idx)?,
-            "monero" | "xmr" => generate_monero(seed, &path, idx)?,
-            _ => anyhow::bail!("Chain not supported yet"),
+            _ => anyhow::bail!("Chain '{}' is not supported. Supported: evm, btc, solana", chain),
         };
 
         if !quiet {
@@ -394,13 +373,16 @@ fn generate_for_chain(
 
     let account_path = base_path.trim_end_matches(|c: char| c.is_numeric() || c == '/');
     if is_ed25519_chain(chain) {
-        let key_pair = derive_master_key_pair_ed25519(seed);
-        let path = parse_path(account_path);
-        let child = hd_wallet::Edwards::derive_child_key_pair_with_path(&key_pair, path);
-        let mut xpub = child.public_key().chain_code.to_vec();
-        let pk_point = child.public_key().public_key;
-        xpub.extend_from_slice(&pk_point.to_bytes(false));
-        wallet.master_xpub = Some(hex::encode(xpub));
+        if let Ok(indexes) = parse_path(account_path) {
+            let derived = derive_slip10_ed25519(seed, &indexes);
+            let chain_code = &derived[32..];
+            let sk_bytes: [u8; 32] = derived[..32].try_into().unwrap();
+            let signing_key = SigningKey::from_bytes(&sk_bytes);
+            let pubkey_bytes = signing_key.verifying_key().to_bytes();
+            let mut xpub = chain_code.to_vec();
+            xpub.extend_from_slice(&pubkey_bytes);
+            wallet.master_xpub = Some(hex::encode(xpub));
+        }
     } else if let Ok(account_key) = derive_secp_key(seed, account_path) {
         let secp = bitcoin::secp256k1::Secp256k1::new();
         wallet.master_xpub = Some(Xpub::from_priv(&secp, &account_key).to_string());
@@ -492,7 +474,7 @@ fn generate_from_xpub(
         let child_idx = bitcoin::bip32::ChildNumber::from_normal_idx(idx)?;
         let child = xpub
             .ckd_pub(&secp, child_idx)
-            .context("Failed to derive child (use non-hardened index only)")?;
+            .context("Failed to derive child")?;
 
         let pk_bytes = child.public_key.serialize_uncompressed();
         let address = match chain {
@@ -501,14 +483,7 @@ fn generate_from_xpub(
                 let pubkey = bitcoin::PublicKey::new(child.public_key);
                 bitcoin::Address::p2pkh(pubkey, bitcoin::NetworkKind::Main).to_string()
             }
-            "doge" | "dogecoin" => {
-                let pk_compressed = child.public_key.serialize();
-                format!(
-                    "D{}",
-                    hex::encode(&pk_compressed[..pk_compressed.len().min(20)])
-                )
-            }
-            _ => format!("0x{}", hex::encode(pk_bytes)),
+            _ => anyhow::bail!("xpub mode is not supported for chain '{}'", chain),
         };
 
         let info = KeyInfo {
@@ -619,12 +594,9 @@ fn generate_solana(
     mode: &str,
     program_id: &str,
 ) -> Result<KeyInfo> {
-    use std::str::FromStr;
-
-    let key_pair = derive_master_key_pair_ed25519(seed);
-    let child = hd_wallet::Edwards::derive_child_key_pair_with_path(&key_pair, parse_path(path));
-
-    let sk_bytes = scalar_to_32_bytes(&child.secret_key().secret_key);
+    let path_indexes = parse_path(path)?;
+    let derived = derive_slip10_ed25519(seed, &path_indexes);
+    let sk_bytes: [u8; 32] = derived[..32].try_into().unwrap();
 
     let signing_key = SigningKey::from_bytes(&sk_bytes);
     let verifying_key = signing_key.verifying_key();
@@ -635,9 +607,8 @@ fn generate_solana(
             let program_pubkey = if program_id.is_empty() {
                 Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap()
             } else {
-                Pubkey::from_str(program_id).unwrap_or_else(|_| {
-                    Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap()
-                })
+                Pubkey::from_str(program_id)
+                    .context("Invalid program ID for PDA")?
             };
             let seed_label = format!("user_deposit_{}", idx);
             let (pda, _bump) = Pubkey::find_program_address(
@@ -680,127 +651,6 @@ fn generate_solana(
     })
 }
 
-fn generate_ton(seed: &[u8], path: &str, idx: u32) -> Result<KeyInfo> {
-    let key_pair = derive_master_key_pair_ed25519(seed);
-    let child = hd_wallet::Edwards::derive_child_key_pair_with_path(&key_pair, parse_path(path));
-
-    let sk_bytes = scalar_to_32_bytes(&child.secret_key().secret_key);
-
-    let signing_key = SigningKey::from_bytes(&sk_bytes);
-    let verifying_key = signing_key.verifying_key();
-
-    let encoded = bs58::encode(verifying_key.to_bytes()).into_string();
-    let address = format!("EQ{}", &encoded[..encoded.len().min(48)]);
-
-    Ok(KeyInfo {
-        index: idx,
-        path: path.to_string(),
-        xprv: None,
-        xpub: None,
-        private_key: hex::encode(sk_bytes),
-        public_key: hex::encode(verifying_key.to_bytes()),
-        address,
-        wif: None,
-    })
-}
-
-fn generate_doge(seed: &[u8], path: &str, idx: u32) -> Result<KeyInfo> {
-    let secp = bitcoin::secp256k1::Secp256k1::new();
-    let child = derive_secp_key(seed, path)?;
-
-    let pub_key = child.to_priv().public_key(&secp);
-    let pk_secp = pub_key.inner;
-    let pk_bytes = pk_secp.serialize().to_vec();
-    let address = format!("D{}", hex::encode(&pk_bytes[..pk_bytes.len().min(20)]));
-
-    let sk_bytes = child.private_key.secret_bytes();
-    let xprv = child.to_string();
-    let xpub = Xpub::from_priv(&secp, &child).to_string();
-
-    Ok(KeyInfo {
-        index: idx,
-        path: path.to_string(),
-        xprv: Some(xprv),
-        xpub: Some(xpub),
-        private_key: hex::encode(sk_bytes),
-        public_key: hex::encode(pk_bytes),
-        address,
-        wif: None,
-    })
-}
-
-fn generate_xrp(seed: &[u8], path: &str, idx: u32) -> Result<KeyInfo> {
-    let key_pair = derive_master_key_pair_ed25519(seed);
-    let child = hd_wallet::Edwards::derive_child_key_pair_with_path(&key_pair, parse_path(path));
-
-    let sk_bytes = scalar_to_32_bytes(&child.secret_key().secret_key);
-
-    let signing_key = SigningKey::from_bytes(&sk_bytes);
-    let verifying_key = signing_key.verifying_key();
-
-    let encoded = bs58::encode(verifying_key.to_bytes()).into_string();
-    let address = format!("r{}", &encoded[..encoded.len().min(33)]);
-
-    Ok(KeyInfo {
-        index: idx,
-        path: path.to_string(),
-        xprv: None,
-        xpub: None,
-        private_key: hex::encode(sk_bytes),
-        public_key: hex::encode(verifying_key.to_bytes()),
-        address,
-        wif: None,
-    })
-}
-
-fn generate_cardano(seed: &[u8], path: &str, idx: u32) -> Result<KeyInfo> {
-    let key_pair = derive_master_key_pair_ed25519(seed);
-    let child = hd_wallet::Edwards::derive_child_key_pair_with_path(&key_pair, parse_path(path));
-
-    let sk_bytes = scalar_to_32_bytes(&child.secret_key().secret_key);
-
-    let signing_key = SigningKey::from_bytes(&sk_bytes);
-    let verifying_key = signing_key.verifying_key();
-
-    let encoded = bs58::encode(verifying_key.to_bytes()).into_string();
-    let address = format!("addr1{}", &encoded[..encoded.len().min(50)]);
-
-    Ok(KeyInfo {
-        index: idx,
-        path: path.to_string(),
-        xprv: None,
-        xpub: None,
-        private_key: hex::encode(sk_bytes),
-        public_key: hex::encode(verifying_key.to_bytes()),
-        address,
-        wif: None,
-    })
-}
-
-fn generate_monero(seed: &[u8], path: &str, idx: u32) -> Result<KeyInfo> {
-    let key_pair = derive_master_key_pair_ed25519(seed);
-    let child = hd_wallet::Edwards::derive_child_key_pair_with_path(&key_pair, parse_path(path));
-
-    let sk_bytes = scalar_to_32_bytes(&child.secret_key().secret_key);
-
-    let signing_key = SigningKey::from_bytes(&sk_bytes);
-    let verifying_key = signing_key.verifying_key();
-
-    let encoded = bs58::encode(verifying_key.to_bytes()).into_string();
-    let address = format!("4{}", &encoded[..encoded.len().min(94)]);
-
-    Ok(KeyInfo {
-        index: idx,
-        path: path.to_string(),
-        xprv: None,
-        xpub: None,
-        private_key: hex::encode(sk_bytes),
-        public_key: hex::encode(verifying_key.to_bytes()),
-        address,
-        wif: None,
-    })
-}
-
 fn eth_address(pubkey_bytes: &[u8]) -> String {
     use tiny_keccak::{Hasher, Keccak};
     let mut output = [0u8; 32];
@@ -809,7 +659,13 @@ fn eth_address(pubkey_bytes: &[u8]) -> String {
     hasher.finalize(&mut output);
 
     let addr = hex::encode(&output[12..]);
-    let hash = hex::encode(output);
+
+    let mut hash_output = [0u8; 32];
+    let mut hasher2 = Keccak::v256();
+    hasher2.update(addr.as_bytes());
+    hasher2.finalize(&mut hash_output);
+    let hash = hex::encode(hash_output);
+
     let mut checksum = String::with_capacity(42);
     checksum.push_str("0x");
     for (i, c) in addr.chars().enumerate() {
@@ -888,7 +744,7 @@ fn handle_output(
 
 fn encrypt_data(data: &str, password: &str) -> Result<String> {
     use aes_gcm::aead::Aead;
-    use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+    use aes_gcm::{Aes256Gcm, KeyInit};
     use base64::Engine;
     use scrypt::scrypt;
 
@@ -902,9 +758,8 @@ fn encrypt_data(data: &str, password: &str) -> Result<String> {
     let cipher =
         Aes256Gcm::new_from_slice(&key).map_err(|e| anyhow::anyhow!("AES init failed: {:?}", e))?;
     let nonce: [u8; 12] = rand::random();
-    #[allow(deprecated)]
     let ciphertext = cipher
-        .encrypt(Nonce::from_slice(&nonce), data.as_bytes())
+        .encrypt(&nonce.into(), data.as_bytes())
         .map_err(|e| anyhow::anyhow!("Encryption failed: {:?}", e))?;
 
     let engine = base64::engine::general_purpose::STANDARD;
@@ -947,26 +802,33 @@ fn decrypt_wallet(file: &str, output: Option<String>, cli_pass: Option<String>) 
 
 fn decrypt_data(enc: &EncryptedWallet, password: &str) -> Result<String> {
     use aes_gcm::aead::Aead;
-    use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+    use aes_gcm::{Aes256Gcm, KeyInit};
     use base64::Engine;
     use scrypt::scrypt;
+
+    if enc.version != 1 {
+        anyhow::bail!("Unsupported wallet version: {}", enc.version);
+    }
 
     let engine = base64::engine::general_purpose::STANDARD;
 
     let salt = engine.decode(&enc.salt).context("Invalid salt")?;
-    let nonce = engine.decode(&enc.nonce).context("Invalid nonce")?;
+    let nonce_vec = engine.decode(&enc.nonce).context("Invalid nonce")?;
     let ciphertext = engine
         .decode(&enc.ciphertext)
         .context("Invalid ciphertext")?;
+
+    let nonce_arr: [u8; 12] = nonce_vec
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid nonce length"))?;
 
     let mut key = [0u8; 32];
     let params = scrypt::Params::new(15, 8, 1)?;
     scrypt(password.as_bytes(), &salt, &params, &mut key)?;
 
     let cipher = Aes256Gcm::new_from_slice(&key)?;
-    #[allow(deprecated)]
     let plaintext = cipher
-        .decrypt(Nonce::from_slice(&nonce), ciphertext.as_ref())
+        .decrypt(&nonce_arr.into(), ciphertext.as_ref())
         .map_err(|_| anyhow::anyhow!("Decryption failed. Wrong password?"))?;
 
     Ok(String::from_utf8(plaintext)?)
