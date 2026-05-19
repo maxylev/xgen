@@ -269,9 +269,7 @@ fn parse_path(path_str: &str) -> Result<Vec<u32>> {
             continue;
         }
         if let Some(num_str) = part.strip_suffix('\'') {
-            let num: u32 = num_str
-                .parse()
-                .context("Invalid hardened path segment")?;
+            let num: u32 = num_str.parse().context("Invalid hardened path segment")?;
             indexes.push(num + HARDENED);
         } else {
             let num: u32 = part.parse().context("Invalid path segment")?;
@@ -360,7 +358,10 @@ fn generate_for_chain(
             "evm" | "ethereum" => generate_evm(seed, &path, idx)?,
             "btc" | "bitcoin" => generate_bitcoin(seed, &path, idx)?,
             "solana" => generate_solana(seed, &path, idx, solana_mode, program_id)?,
-            _ => anyhow::bail!("Chain '{}' is not supported. Supported: evm, btc, solana", chain),
+            _ => anyhow::bail!(
+                "Chain '{}' is not supported. Supported: evm, btc, solana",
+                chain
+            ),
         };
 
         if !quiet {
@@ -607,8 +608,7 @@ fn generate_solana(
             let program_pubkey = if program_id.is_empty() {
                 Pubkey::from_str("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA").unwrap()
             } else {
-                Pubkey::from_str(program_id)
-                    .context("Invalid program ID for PDA")?
+                Pubkey::from_str(program_id).context("Invalid program ID for PDA")?
             };
             let seed_label = format!("user_deposit_{}", idx);
             let (pda, _bump) = Pubkey::find_program_address(
