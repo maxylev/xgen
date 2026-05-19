@@ -19,6 +19,8 @@ Supports: **EVM, Bitcoin, Solana** (cryptographically verified)
 - [Exchange Workflow](#exchange-workflow)
 - [Solana Modes](#solana-modes)
 - [Encryption](#encryption)
+- [Batch Derivation](#batch-derivation)
+- [Library Usage](#library-usage)
 - [Development](#development)
 - [Security](#security)
 
@@ -261,6 +263,92 @@ xgen gen --chain evm --num 100
 
 ---
 
+## Library Usage
+
+`xgen` exposes a public library interface. Add it to your `Cargo.toml`:
+
+```toml
+[dependencies]
+xgen = "1.0"
+bip39 = "2.2"
+```
+
+### Programmatic Address Generation
+
+```rust
+use xgen::{generate_for_chain, KeyInfo, WalletOutput};
+use bip39::Mnemonic;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+    let mnemonic = Mnemonic::parse(phrase)?;
+    let seed = mnemonic.to_seed("");
+
+    // Generate an EVM address at index 0
+    let wallet: WalletOutput = generate_for_chain(
+        &seed,
+        "m/44'/60'/0'/0/0",
+        Some(0),       // index
+        1,             // num
+        &mnemonic,
+        "",            // passphrase
+        "evm",
+        "full",        // solana_mode (ignored for evm)
+        "",            // program_id (ignored for evm)
+        &None,         // explicit indexes
+    )?;
+
+    for key in &wallet.keys {
+        println!("Path: {}, Address: {}", key.path, key.address);
+    }
+    Ok(())
+}
+```
+
+### xpub Watch-Only Mode
+
+```rust
+use xgen::generate_from_xpub;
+
+let wallet = generate_from_xpub(
+    "xpub6DCoCpSuQZB2...",
+    "m/44'/60'/0'/0",
+    None,           // index (None = use num)
+    10,             // num
+    "evm",
+)?;
+```
+
+### Encryption / Decryption
+
+```rust
+use xgen::{encrypt_data, decrypt_data, EncryptedWallet};
+
+// Encrypt a wallet JSON string
+let encrypted = encrypt_data(wallet_json, "password")?;
+
+// Decrypt
+let enc: EncryptedWallet = serde_json::from_str(&encrypted)?;
+let decrypted = decrypt_data(&enc, "password")?;
+```
+
+### Public API
+
+| Function / Type | Description |
+|-----------------|-------------|
+| `generate_for_chain(...)` | Generate HD wallet addresses for a chain |
+| `generate_from_xpub(...)` | Watch-only address generation from xpub |
+| `generate_evm(...)` / `generate_bitcoin(...)` / `generate_solana(...)` | Single-chain generators |
+| `encrypt_data(...)` / `decrypt_data(...)` | AES-256-GCM encrypt/decrypt |
+| `eth_address(&[u8])` | EIP-55 checksummed EVM address from pubkey |
+| `derive_slip10_ed25519(...)` | SLIP-0010 Ed25519 key derivation |
+| `parse_path(...)` | Parse BIP44 derivation path string |
+| `get_default_path(...)` | Get default BIP44 path per chain |
+| `KeyInfo` / `WalletOutput` / `EncryptedWallet` | Serializable data structures |
+| `HARDENED` | Hardened index constant (`0x80000000`) |
+
+---
+
 ## Development
 
 ```bash
@@ -286,9 +374,13 @@ bash tests/e2e-exchange.sh
 
 ```
 xgen/
-├── src/main.rs              # ~700 lines of Rust
-├── tests/integration.rs     # ~1100 lines, 62 tests
-├── Cargo.toml               # 20+ deps at latest versions
+├── src/
+│   ├── lib.rs               # Core library (types, crypto, generators)
+│   └── main.rs             # CLI wrapper (arg parsing, terminal output)
+├── tests/
+│   ├── integration.rs       # 62 integration tests
+│   └── e2e-exchange.sh     # E2E on Anvil + Solana + bitcoind
+├── Cargo.toml               # lib + bin targets
 ├── .github/workflows/
 │   ├── ci.yml               # fmt + clippy + test on push/PR
 │   └── publish.yml          # Publish to crates.io on release
