@@ -5,3 +5,7 @@ Cargo.lock
 .env
 *.enc.json
 *.json
+!skills/xgen/evals/evals.json
+skills/xgen/xgen-workspace/
+.agents
+skills-lock.json

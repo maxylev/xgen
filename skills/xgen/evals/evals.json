@@ -1,0 +1,26 @@
+{
+  "skill_name": "xgen",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I'm building a Rust project and need to generate EVM wallet addresses from a BIP39 mnemonic. Write a function that takes a mnemonic string and a count and returns a Vec of EIP-55 addresses. Add xgen as a dependency. Use account 0, change 0, default EVM path.",
+      "expected_output": "A Rust function using xgen's generate_for_chain or generate_evm that returns Vec<String> of EIP-55 addresses",
+      "files": [],
+      "expectations": []
+    },
+    {
+      "id": 2,
+      "prompt": "I need an exchange-style setup: write two Rust functions — one that takes a mnemonic and returns the account-level xpub for EVM, and another that takes an xpub string and count and returns watch-only deposit addresses. These will run on different servers.",
+      "expected_output": "Two Rust functions: get_account_xpub(mnemonic) -> String and get_deposit_addresses(xpub, count) -> Vec<String> using generate_from_xpub",
+      "files": [],
+      "expectations": []
+    },
+    {
+      "id": 3,
+      "prompt": "For a Solana exchange hot wallet, write a Rust function that takes a 64-byte hex xpriv and a list of indices and returns Solana addresses WITHOUT exposing private keys. Include the dependency setup in Cargo.toml.",
+      "expected_output": "A Rust function using generate_from_xpriv with solana_mode='cold-export' that returns addresses with private keys hidden",
+      "files": [],
+      "expectations": []
+    }
+  ]
+}
